@@ -9,7 +9,7 @@ import { NAV_ITEMS } from './nav-items'
 import { Avatar, useSignOut } from './user-menu'
 
 /** Telas que não cabem na barra inferior (Calendário, Relatórios). */
-const EXTRA_VIEWS = NAV_ITEMS.filter((i) => !i.mobile && i.view !== 'configuracoes')
+const EXTRA_VIEWS = NAV_ITEMS.filter((i) => !i.mobile && !i.desktopOnly && i.view !== 'configuracoes')
 
 function MenuGroup({ title, children }: { title: string; children: ReactNode }) {
   return (

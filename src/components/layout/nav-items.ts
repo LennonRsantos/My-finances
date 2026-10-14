@@ -8,6 +8,8 @@ export interface NavItem {
   /** Na barra inferior do celular; os demais ficam no menu do cabeçalho */
   mobile: boolean
   mobileLabel?: string
+  /** Não aparece em nenhum menu do celular (nem barra inferior, nem menu do cabeçalho) */
+  desktopOnly?: boolean
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -17,7 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { view: 'calendario', label: 'Calendário', icon: CalendarDays, mobile: false },
   { view: 'casa', label: 'Casa', icon: House, mobile: true },
   { view: 'veiculo', label: 'Veículo', icon: Car, mobile: true },
-  { view: 'inteligencia', label: 'Sair do vermelho', icon: Lightbulb, mobile: true },
+  { view: 'inteligencia', label: 'Sair do vermelho', icon: Lightbulb, mobile: false, desktopOnly: true },
   { view: 'relatorios', label: 'Relatórios', icon: BarChart3, mobile: false },
   { view: 'configuracoes', label: 'Configurações', icon: Settings, mobile: false },
 ]
