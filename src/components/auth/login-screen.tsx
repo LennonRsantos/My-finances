@@ -164,7 +164,7 @@ function ResetForm({ defaultEmail, onBack }: { defaultEmail: string; onBack: () 
       </div>
 
       {sentTo ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl bg-income-soft p-4 text-center text-income">
+        <div className="flex flex-col items-center gap-2 rounded-xl bg-income-soft p-4 text-center text-income">
           <MailCheck className="size-6" />
           <p className="text-sm">
             Se houver uma conta para <strong>{sentTo}</strong>, o link chega em instantes. Confira também o spam.
@@ -215,7 +215,7 @@ export function LoginScreen() {
     <main className="grid min-h-dvh place-items-center p-4 sm:p-6">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <div className="flex flex-col items-center gap-3 text-center">
-          <span className="grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground">
+          <span className="grid size-14 place-items-center rounded-xl bg-primary text-primary-foreground">
             <Wallet className="size-7" />
           </span>
           <div className="flex flex-col gap-1">
@@ -226,7 +226,7 @@ export function LoginScreen() {
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
           {mode === 'reset' ? (
             <ResetForm defaultEmail={resetEmail} onBack={() => setMode('login')} />
           ) : (

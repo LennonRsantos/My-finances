@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
 import { PAYMENT_METHOD_LABELS, type TransactionStatus, type TransactionType } from '@/types/finance'
-import { PageHeader } from './dashboard-page'
+import { PageHeader } from '@/components/layout/page-header'
 
 const statusTone: Record<TransactionStatus, Tone> = { pago: 'income', pendente: 'info', atrasado: 'expense' }
 
@@ -92,7 +92,7 @@ export function TransactionsPage() {
       <PageHeader title="Lançamentos" actions={<MonthSelector />} />
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
         {/* Abas: cada uma mostra o total do mês */}
-        <div role="tablist" aria-label="Tipo de lançamento" className="grid grid-cols-2 gap-2 rounded-2xl bg-muted p-1">
+        <div role="tablist" aria-label="Tipo de lançamento" className="grid grid-cols-2 gap-2 rounded-xl bg-muted p-1">
           {(Object.keys(tabs) as TransactionType[]).map((key) => {
             const { label, icon: Icon, active } = tabs[key]
             const selected = tab === key

@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
 import type { ISODate, Transaction, TransactionStatus } from '@/types/finance'
-import { PageHeader } from './dashboard-page'
+import { PageHeader } from '@/components/layout/page-header'
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 

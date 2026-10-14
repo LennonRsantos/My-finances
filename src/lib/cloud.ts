@@ -8,6 +8,8 @@
  *   users/{uid}/categories/{id}      Category
  *   users/{uid}/subcategories/{id}   Subcategory
  *   users/{uid}/debts/{id}           Debt
+ *   users/{uid}/vehicles/{id}        Vehicle
+ *   users/{uid}/maintenance/{id}     MaintenanceReminder
  */
 import {
   collection,
@@ -23,7 +25,7 @@ import {
   type Unsubscribe,
   type WriteBatch,
 } from 'firebase/firestore'
-import type { Category, Debt, Installment, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
+import type { Category, Debt, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
 import { DEFAULT_CATEGORIES_VERSION, missingDefaults } from '@/data/mock'
 import { getFirebase } from './firebase'
 
@@ -36,6 +38,8 @@ export interface Collections {
   categories: Category
   subcategories: Subcategory
   debts: Debt
+  vehicles: Vehicle
+  maintenance: MaintenanceReminder
 }
 export type CollectionName = keyof Collections
 
@@ -101,6 +105,8 @@ export interface LocalSnapshot {
   installments: Installment[]
   recurringCosts: RecurringCost[]
   debts: Debt[]
+  vehicles: Vehicle[]
+  maintenance: MaintenanceReminder[]
 }
 
 /**
@@ -118,6 +124,8 @@ export async function seedUserIfNew(uid: string, local: LocalSnapshot): Promise<
     ...local.transactions.map((data) => ({ name: 'transactions' as const, data })),
     ...local.recurringCosts.map((data) => ({ name: 'recurringCosts' as const, data })),
     ...local.debts.map((data) => ({ name: 'debts' as const, data })),
+    ...local.vehicles.map((data) => ({ name: 'vehicles' as const, data })),
+    ...local.maintenance.map((data) => ({ name: 'maintenance' as const, data })),
   ]
   await inBatches(items, (batch, { name, data }) => batch.set(itemDoc(uid, name, data.id), data))
   // Documento do usuário por último: só marca como criado depois dos dados.
@@ -132,12 +140,14 @@ export async function seedUserIfNew(uid: string, local: LocalSnapshot): Promise<
 /** Conta antiga: adiciona categorias padrão criadas depois (só as que faltam). */
 export async function ensureDefaultCategories(uid: string) {
   const user = await getDoc(userDoc(uid))
-  if (((user.data()?.defaultsVersion as number | undefined) ?? 1) >= DEFAULT_CATEGORIES_VERSION) return
+  const version = (user.data()?.defaultsVersion as number | undefined) ?? 1
+  if (version >= DEFAULT_CATEGORIES_VERSION) return
 
   const [cats, subs] = await Promise.all([getDocs(col(uid, 'categories')), getDocs(col(uid, 'subcategories'))])
   const missing = missingDefaults(
     cats.docs.map((d) => ({ id: d.id })),
     subs.docs.map((d) => ({ id: d.id })),
+    version,
   )
   await inBatches<{ name: CollectionName; data: Category | Subcategory }>(
     [
@@ -166,7 +176,7 @@ export function deleteDocs(uid: string, refs: DocRef[]) {
   return inBatches(refs, (batch, { name, id }) => batch.delete(itemDoc(uid, name, id)))
 }
 
-const ALL_COLLECTIONS: CollectionName[] = ['transactions', 'installments', 'recurringCosts', 'categories', 'subcategories', 'debts']
+const ALL_COLLECTIONS: CollectionName[] = ['transactions', 'installments', 'recurringCosts', 'categories', 'subcategories', 'debts', 'vehicles', 'maintenance']
 
 /** Exclusão de conta: apaga todas as coleções do usuário e o documento dele. */
 export async function deleteAllUserData(uid: string) {

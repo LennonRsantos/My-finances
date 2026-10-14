@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { ArrowDownRight, ArrowUpRight, Layers, Repeat, Send } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm, useWatch, type DefaultValues } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { categoryIconMap } from '@/lib/icons'
 import { formatMoney, splitCents, toCents } from '@/lib/money'
 import { MAX_INSTALLMENTS, parseMoneyInput, transactionFormSchema, type TransactionFormValues } from '@/lib/schemas'
 import { cn, createId } from '@/lib/utils'
+import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
 import { useFinanceStore } from '@/store/finance-store'
 import {
   PAYMENT_METHOD_LABELS,
@@ -51,9 +52,10 @@ interface Props {
 }
 
 export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }: Props) {
-  const { categories, subcategories, transactions, addTransaction, addInstallmentPurchase, addRecurringCost } = useFinanceStore(
+  const { categories, subcategories, transactions, vehicles, addTransaction, addInstallmentPurchase, addRecurringCost } = useFinanceStore(
     useShallow((s) => ({
       transactions: s.transactions,
+      vehicles: s.vehicles,
       categories: s.categories,
       subcategories: s.subcategories,
       addTransaction: s.addTransaction,
@@ -91,6 +93,12 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       'frequency',
     ],
   })
+  // Gasto da categoria Veículo pode ser ligado a um veículo (aparece na aba Veículo).
+  const activeVehicles = vehicles.filter((v) => v.active)
+  const [pickedVehicle, setPickedVehicle] = useState<string | null | undefined>(undefined)
+  const vehicleId =
+    categoryId === VEHICLE_CATEGORY_ID && activeVehicles.length ? (pickedVehicle === undefined ? activeVehicles[0]!.id : pickedVehicle) : null
+
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
   const ongoing = isInstallment && installmentMode === 'andamento'
   const payTo = useWatch({ control, name: 'payTo' })?.trim()
@@ -163,6 +171,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         endDate: null,
         lastGeneratedMonth: null,
         payTo,
+        vehicleId,
         createdAt: new Date().toISOString(),
       }
       const rc: RecurringCost =
@@ -205,6 +214,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         installment: null,
         recurringCostId: null,
         payTo,
+        vehicleId,
         notes: v.notes || undefined,
         createdAt: new Date().toISOString(),
       }
@@ -212,6 +222,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       onSuccess?.(`${v.type === 'receita' ? 'Receita' : 'Despesa'} "${v.description}" lançada`)
     }
     reset(defaultValues(v.type))
+    setPickedVehicle(undefined)
   }
 
   const today = todayISO()
@@ -228,7 +239,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           control={control}
           name="type"
           render={({ field }) => (
-            <div role="radiogroup" aria-label="Tipo de lançamento" className="grid grid-cols-2 gap-2 rounded-2xl bg-muted p-1">
+            <div role="radiogroup" aria-label="Tipo de lançamento" className="grid grid-cols-2 gap-2 rounded-xl bg-muted p-1">
               {(['despesa', 'receita'] as const).map((t) => {
                 const Icon = t === 'despesa' ? ArrowDownRight : ArrowUpRight
                 const active = field.value === t
@@ -368,6 +379,25 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           </div>
         )}
 
+        {categoryId === VEHICLE_CATEGORY_ID && activeVehicles.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Label>Veículo</Label>
+            <Select value={vehicleId ?? 'none'} onValueChange={(v) => setPickedVehicle(v === 'none' ? null : v)}>
+              <SelectTrigger aria-label="Veículo">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Nenhum</SelectItem>
+                {activeVehicles.map((v) => (
+                  <SelectItem key={v.id} value={v.id}>
+                    {v.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         {/* Data + forma de pagamento (só despesa) */}
         <div className={cn('grid gap-5', type === 'despesa' && 'sm:grid-cols-2')}>
           <div className="flex flex-col gap-2">
@@ -393,7 +423,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
                   onClick={() => setValue('dueDate', d.value, { shouldValidate: true })}
                   className={cn(
                     'h-8 rounded-full border px-3 text-xs',
-                    dueDate === d.value ? 'border-primary bg-info-soft text-info' : 'hover:bg-muted',
+                    dueDate === d.value ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted',
                   )}
                 >
                   {d.label}
@@ -457,7 +487,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           control={control}
           name="paid"
           render={({ field }) => (
-            <div className="flex items-center justify-between gap-4 rounded-2xl border p-3">
+            <div className="flex items-center justify-between gap-4 rounded-xl border p-3">
               <div>
                 <Label htmlFor="paid">
                   {ongoing
@@ -482,7 +512,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         />
 
         {/* Fixo (recorrente) */}
-        <div className="flex flex-col gap-4 rounded-2xl border p-3">
+        <div className="flex flex-col gap-4 rounded-xl border p-3">
           <Controller
             control={control}
             name="isRecurring"
@@ -544,7 +574,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
         {/* Parcelamento */}
         {type === 'despesa' && (
-          <div className="flex flex-col gap-4 rounded-2xl border p-3">
+          <div className="flex flex-col gap-4 rounded-xl border p-3">
             <Controller
               control={control}
               name="isInstallment"

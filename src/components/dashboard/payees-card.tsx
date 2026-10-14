@@ -1,4 +1,4 @@
-import { ChevronDown, Send } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,15 +22,13 @@ export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <CardTitle className="flex items-center gap-2">
-            <Send className="size-4 text-info" /> A enviar
-          </CardTitle>
+          <CardTitle>A enviar</CardTitle>
           <CardDescription>Até o fim de {formatMonthLabel(month).toLowerCase()}</CardDescription>
         </div>
-        <span className="text-xl font-semibold">{formatMoney(totalMonth)}</span>
+        <span className="text-xl font-semibold tabular-nums tracking-[-0.01em]">{formatMoney(totalMonth)}</span>
       </CardHeader>
       <CardContent>
-        <ul className="flex flex-col divide-y rounded-xl border">
+        <ul className="flex flex-col divide-y rounded-lg border">
           {data.map((p) => {
             const key = payeeKey(p.name)
             const expanded = open === key
@@ -41,7 +39,7 @@ export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month
                   aria-expanded={expanded}
                   className="flex w-full items-center gap-3 p-3 text-left"
                 >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-full bg-info-soft font-semibold text-info">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted font-semibold text-foreground">
                     {p.name.charAt(0).toUpperCase()}
                   </span>
                   <span className="min-w-0 flex-1">

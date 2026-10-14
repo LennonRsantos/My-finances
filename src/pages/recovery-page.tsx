@@ -53,7 +53,7 @@ import { useFinanceStore } from '@/store/finance-store'
 import { useRecoveryStore } from '@/store/recovery-store'
 import { useUIStore } from '@/store/ui-store'
 import type { Debt, DebtStrategy, RecurringCost, YearMonth } from '@/types/finance'
-import { PageHeader } from './dashboard-page'
+import { PageHeader } from '@/components/layout/page-header'
 
 const monthShort = (m: YearMonth) => format(yearMonthToDate(m), 'MMM/yy', { locale: ptBR })
 const pct = (v: number) => `${Math.round(v * 100)}%`
@@ -322,7 +322,7 @@ function CutPlanCard({ d, result, cancellable }: { d: Diagnosis; result: PlanRes
         <CardDescription>Simule cortes por categoria. Comece pelo estilo de vida: é onde dói menos.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        <div className={cn('flex flex-col gap-3 rounded-2xl p-4', positive ? 'bg-income-soft' : 'bg-expense-soft')}>
+        <div className={cn('flex flex-col gap-3 rounded-xl p-4', positive ? 'bg-income-soft' : 'bg-expense-soft')}>
           <div className="grid grid-cols-2 gap-3">
             <Stat label="Plano libera por mês" value={formatMoney(result.freed)} tone="income" />
             <Stat
@@ -529,7 +529,7 @@ function DebtsCard({ debts, available }: { debts: Debt[]; available: number }) {
                     aria-checked={active}
                     onClick={() => setStrategy(key)}
                     className={cn(
-                      'flex flex-col gap-1 rounded-2xl border p-3 text-left transition-colors',
+                      'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors',
                       active ? 'border-primary bg-muted' : 'hover:bg-muted',
                     )}
                   >
@@ -546,7 +546,7 @@ function DebtsCard({ debts, available }: { debts: Debt[]; available: number }) {
             </div>
 
             {chosen.months === null ? (
-              <p className="flex gap-2 rounded-2xl bg-expense-soft p-3 text-sm text-expense">
+              <p className="flex gap-2 rounded-xl bg-expense-soft p-3 text-sm text-expense">
                 <AlertTriangle className="size-4 shrink-0" />
                 Com esse valor as dívidas não acabam nunca: os juros crescem mais rápido que os pagamentos. Aumente o extra ou
                 renegocie as dívidas mais caras.

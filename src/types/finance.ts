@@ -133,6 +133,12 @@ export interface Transaction {
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
   notes?: string
+  /** Veículo a que o gasto pertence (aba Veículo) */
+  vehicleId?: Vehicle['id'] | null
+  /** Hodômetro (km) no momento do gasto */
+  odometer?: number | null
+  /** Presente quando o lançamento é um abastecimento */
+  fuel?: FuelLog | null
   createdAt: string
 }
 
@@ -161,6 +167,8 @@ interface RecurringCostBase {
   lastGeneratedMonth: YearMonth | null
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
+  /** Veículo (ex.: IPVA, seguro); passa para as ocorrências geradas */
+  vehicleId?: Vehicle['id'] | null
   createdAt: string
 }
 
@@ -197,6 +205,63 @@ export interface Installment {
   accountName: string
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Veículos
+// ---------------------------------------------------------------------------
+
+export const VEHICLE_KINDS = ['carro', 'moto', 'outro'] as const
+export type VehicleKind = (typeof VEHICLE_KINDS)[number]
+
+export const FUEL_TYPES = ['flex', 'gasolina', 'etanol', 'diesel', 'gnv', 'eletrico'] as const
+export type FuelType = (typeof FUEL_TYPES)[number]
+
+export interface Vehicle {
+  id: ID
+  name: string
+  kind: VehicleKind
+  plate: string | null
+  model: string | null
+  year: number | null
+  /** Combustível que o veículo aceita; `flex` = etanol ou gasolina */
+  fuel: FuelType
+  /** Km no hodômetro ao cadastrar */
+  initialOdometer: number
+  active: boolean
+  createdAt: string
+}
+
+/** Dados do abastecimento guardados no próprio lançamento. */
+export interface FuelLog {
+  liters: number
+  /** Combustível colocado (no flex: etanol ou gasolina) */
+  type: FuelType
+  /** Tanque cheio: necessário para calcular o consumo */
+  fullTank: boolean
+}
+
+export interface MaintenanceReminder {
+  id: ID
+  /** Veículo do lembrete; `null` = manutenção da casa */
+  vehicleId: Vehicle['id'] | null
+  name: string
+  /** A cada quantos km; `null` = só por tempo */
+  intervalKm: number | null
+  /** A cada quantos meses; `null` = só por km */
+  intervalMonths: number | null
+  lastKm: number | null
+  lastDate: ISODate | null
+  createdAt: string
+}
+
+export const FUEL_LABELS: Record<FuelType, string> = {
+  flex: 'Flex',
+  gasolina: 'Gasolina',
+  etanol: 'Etanol',
+  diesel: 'Diesel',
+  gnv: 'GNV',
+  eletrico: 'Elétrico',
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { Category, Debt, Installment, RecurringCost, Subcategory, Transaction } from '@/types/finance'
+import type { Category, Debt, Installment, ISODate, MaintenanceReminder, RecurringCost, Subcategory, Transaction, Vehicle } from '@/types/finance'
 import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
@@ -36,6 +36,8 @@ interface FinanceData {
   installments: Installment[]
   recurringCosts: RecurringCost[]
   debts: Debt[]
+  vehicles: Vehicle[]
+  maintenance: MaintenanceReminder[]
 }
 
 interface FinanceState extends FinanceData {
@@ -75,6 +77,15 @@ interface FinanceState extends FinanceData {
   /** Cria ou atualiza dívida do plano de quitação. */
   saveDebt: (d: Debt) => void
   removeDebt: (id: Debt['id']) => void
+  saveVehicle: (v: Vehicle) => void
+  /** Exclui o veículo e os lembretes; com gastos lançados, só desativa (o histórico fica). */
+  removeVehicle: (id: Vehicle['id']) => void
+  /** Lançamento ligado a veículo; recria a categoria Veículo se o usuário a apagou. */
+  addVehicleExpense: (t: Transaction) => void
+  saveReminder: (r: MaintenanceReminder) => void
+  removeReminder: (id: MaintenanceReminder['id']) => void
+  /** Marca a manutenção como feita; com `expense`, lança o gasto também. */
+  completeReminder: (id: MaintenanceReminder['id'], km: number | null, date: ISODate, expense?: Transaction) => void
 }
 
 /** Começa vazio, só com as categorias padrão. */
@@ -85,6 +96,8 @@ export const initialFinanceData = (): FinanceData => ({
   installments: [],
   recurringCosts: [],
   debts: [],
+  vehicles: [],
+  maintenance: [],
 })
 
 type Mutable = keyof FinanceData
@@ -92,6 +105,15 @@ type Mutable = keyof FinanceData
 interface Changes {
   upserts?: cloud.DocWrite[]
   deletes?: cloud.DocRef[]
+}
+
+/** Categoria Veículo e subcategorias padrão que o usuário tenha apagado. */
+function vehicleCategoryWrites(state: FinanceData): cloud.DocWrite[] {
+  const missing = missingDefaults(state.categories, state.subcategories)
+  return [
+    ...missing.categories.filter((c) => c.id === 'cat-veiculo').map((data) => ({ name: 'categories' as const, data })),
+    ...missing.subcategories.filter((sc) => sc.categoryId === 'cat-veiculo').map((data) => ({ name: 'subcategories' as const, data })),
+  ]
 }
 
 /** Aplica mudanças no estado local (substitui por id ou acrescenta; remove). */
@@ -268,6 +290,8 @@ export const useFinanceStore = create<FinanceState>()(
               ...data.installments.map((d) => ({ name: 'installments' as const, data: d })),
               ...data.recurringCosts.map((d) => ({ name: 'recurringCosts' as const, data: d })),
               ...data.debts.map((d) => ({ name: 'debts' as const, data: d })),
+              ...data.vehicles.map((d) => ({ name: 'vehicles' as const, data: d })),
+              ...data.maintenance.map((d) => ({ name: 'maintenance' as const, data: d })),
               ...txWrites(data.transactions),
             ],
           }),
@@ -323,6 +347,38 @@ export const useFinanceStore = create<FinanceState>()(
         saveDebt: (data) => commit({ upserts: [{ name: 'debts', data }] }),
 
         removeDebt: (id) => commit({ deletes: [{ name: 'debts', id }] }),
+
+        saveVehicle: (data) => commit({ upserts: [{ name: 'vehicles', data }] }),
+
+        removeVehicle: (id) => {
+          const { vehicles, maintenance, transactions } = get()
+          const v = vehicles.find((x) => x.id === id)
+          if (!v) return
+          const reminders = maintenance.filter((r) => r.vehicleId === id).map((r) => ({ name: 'maintenance' as const, id: r.id }))
+          const used = transactions.some((t) => t.vehicleId === id)
+          commit(
+            used
+              ? { upserts: [{ name: 'vehicles', data: { ...v, active: false } }], deletes: reminders }
+              : { deletes: [{ name: 'vehicles', id }, ...reminders] },
+          )
+        },
+
+        addVehicleExpense: (t) => commit({ upserts: [...vehicleCategoryWrites(get()), ...txWrites([t])] }),
+
+        saveReminder: (data) => commit({ upserts: [{ name: 'maintenance', data }] }),
+
+        removeReminder: (id) => commit({ deletes: [{ name: 'maintenance', id }] }),
+
+        completeReminder: (id, km, date, expense) => {
+          const r = get().maintenance.find((x) => x.id === id)
+          if (!r) return
+          commit({
+            upserts: [
+              { name: 'maintenance', data: { ...r, lastKm: km ?? r.lastKm, lastDate: date } },
+              ...(expense ? [...vehicleCategoryWrites(get()), ...txWrites([expense])] : []),
+            ],
+          })
+        },
       }
     },
     {
@@ -331,7 +387,9 @@ export const useFinanceStore = create<FinanceState>()(
       // v3: inclui categorias padrão novas (Veículo, Empréstimos).
       // v4: gastos fixos (recurringCosts).
       // v5: dívidas do plano Sair do vermelho.
-      version: 5,
+      // v6: veículos e lembretes de manutenção.
+      // v7: subcategorias da casa (água, gás, condomínio, IPTU, manutenção).
+      version: 7,
       migrate: (persisted, version) => {
         let state = persisted as FinanceData
         if (version < 2) {
@@ -353,16 +411,23 @@ export const useFinanceStore = create<FinanceState>()(
         }
         if (version < 4) state = { ...state, recurringCosts: [] }
         if (version < 5) state = { ...state, debts: [] }
+        if (version < 6) state = { ...state, vehicles: [], maintenance: [] }
+        if (version < 7) {
+          const missing = missingDefaults(state.categories, state.subcategories, 2)
+          state = { ...state, subcategories: [...state.subcategories, ...missing.subcategories] }
+        }
         return state
       },
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts }) => ({
+      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance }) => ({
         categories,
         subcategories,
         transactions,
         installments,
         recurringCosts,
         debts,
+        vehicles,
+        maintenance,
       }),
     },
   ),

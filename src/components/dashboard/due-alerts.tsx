@@ -46,7 +46,7 @@ export function DueAlerts({ alerts }: { alerts: DueAlertsData }) {
               aria-selected={active === key}
               onClick={() => setActive(key)}
               className={cn(
-                'flex min-h-16 flex-col items-start justify-between rounded-xl border p-2.5 text-left transition-colors',
+                'flex min-h-16 flex-col items-start justify-between rounded-lg border p-2.5 text-left transition-colors',
                 active === key ? activeTone[tone] : 'hover:bg-muted',
               )}
             >
@@ -54,7 +54,7 @@ export function DueAlerts({ alerts }: { alerts: DueAlertsData }) {
                 <Icon className="size-3.5" />
                 {label}
               </span>
-              <span className="text-lg font-semibold text-foreground">{alerts[key].length}</span>
+              <span className="text-lg font-semibold tabular-nums text-foreground">{alerts[key].length}</span>
             </button>
           ))}
         </div>

@@ -7,7 +7,7 @@ import { toCents } from '@/lib/money'
  * Versão das categorias padrão. Ao incluir novas, suba o número: contas
  * existentes recebem só as que faltam (por id), sem sobrescrever edições.
  */
-export const DEFAULT_CATEGORIES_VERSION = 2
+export const DEFAULT_CATEGORIES_VERSION = 3
 
 export const mockCategories: Category[] = [
   { id: 'cat-moradia', name: 'Moradia', type: 'despesa', color: '#6366f1', icon: 'house', monthlyBudget: toCents(2200) },
@@ -28,6 +28,11 @@ export const mockSubcategories: Subcategory[] = [
   { id: 'sub-aluguel', categoryId: 'cat-moradia', name: 'Aluguel', monthlyBudget: null },
   { id: 'sub-energia', categoryId: 'cat-moradia', name: 'Energia', monthlyBudget: null },
   { id: 'sub-internet', categoryId: 'cat-moradia', name: 'Internet', monthlyBudget: null },
+  { id: 'sub-agua', categoryId: 'cat-moradia', name: 'Água', monthlyBudget: null },
+  { id: 'sub-gas', categoryId: 'cat-moradia', name: 'Gás', monthlyBudget: null },
+  { id: 'sub-condominio', categoryId: 'cat-moradia', name: 'Condomínio', monthlyBudget: null },
+  { id: 'sub-iptu', categoryId: 'cat-moradia', name: 'IPTU', icon: 'receipt', monthlyBudget: null },
+  { id: 'sub-casa-manutencao', categoryId: 'cat-moradia', name: 'Manutenção e reparos', icon: 'wrench', monthlyBudget: null },
   { id: 'sub-mercado', categoryId: 'cat-alimentacao', name: 'Mercado', monthlyBudget: null },
   { id: 'sub-delivery', categoryId: 'cat-alimentacao', name: 'Delivery', monthlyBudget: toCents(300) },
   { id: 'sub-restaurante', categoryId: 'cat-alimentacao', name: 'Restaurante', monthlyBudget: null },
@@ -50,13 +55,32 @@ export const mockSubcategories: Subcategory[] = [
   { id: 'sub-streaming', categoryId: 'cat-assinaturas', name: 'Streaming', monthlyBudget: null },
 ]
 
-/** Categorias/subcategorias padrão que ainda não existem (comparando por id). */
-export function missingDefaults(categories: Pick<Category, 'id'>[], subcategories: Pick<Subcategory, 'id'>[]) {
+/** Versão em que cada padrão novo entrou; quem não está aqui é da versão 2 ou anterior. */
+const INTRODUCED_IN: Record<string, number> = {
+  'sub-agua': 3,
+  'sub-gas': 3,
+  'sub-condominio': 3,
+  'sub-iptu': 3,
+  'sub-casa-manutencao': 3,
+}
+const introducedIn = (id: string) => INTRODUCED_IN[id] ?? 2
+
+/**
+ * Categorias/subcategorias padrão que ainda não existem (comparando por id).
+ * Com `sinceVersion`, só as criadas depois dela: padrões antigos que a pessoa
+ * apagou de propósito não voltam.
+ */
+export function missingDefaults(
+  categories: Pick<Category, 'id'>[],
+  subcategories: Pick<Subcategory, 'id'>[],
+  sinceVersion = 0,
+) {
   const catIds = new Set(categories.map((c) => c.id))
   const subIds = new Set(subcategories.map((s) => s.id))
+  const isNew = (id: string) => introducedIn(id) > sinceVersion
   return {
-    categories: mockCategories.filter((c) => !catIds.has(c.id)),
-    subcategories: mockSubcategories.filter((s) => !subIds.has(s.id)),
+    categories: mockCategories.filter((c) => !catIds.has(c.id) && isNew(c.id)),
+    subcategories: mockSubcategories.filter((s) => !subIds.has(s.id) && isNew(s.id)),
   }
 }
 

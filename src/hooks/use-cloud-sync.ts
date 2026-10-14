@@ -19,6 +19,8 @@ async function startSync(uid: string): Promise<Unsubscribe> {
     installments: finance.installments,
     recurringCosts: finance.recurringCosts,
     debts: finance.debts,
+    vehicles: finance.vehicles,
+    maintenance: finance.maintenance,
   })
   await ensureDefaultCategories(uid)
 
@@ -41,6 +43,8 @@ async function startSync(uid: string): Promise<Unsubscribe> {
     subscribeCollection(uid, 'categories', (categories) => useFinanceStore.setState({ categories }), reportSyncError),
     subscribeCollection(uid, 'subcategories', (subcategories) => useFinanceStore.setState({ subcategories }), reportSyncError),
     subscribeCollection(uid, 'debts', (debts) => useFinanceStore.setState({ debts }), reportSyncError),
+    subscribeCollection(uid, 'vehicles', (vehicles) => useFinanceStore.setState({ vehicles }), reportSyncError),
+    subscribeCollection(uid, 'maintenance', (maintenance) => useFinanceStore.setState({ maintenance }), reportSyncError),
     subscribeSettings(uid, (remote) => {
       if (!remote) return
       useSettingsStore.setState((s) => ({ settings: { ...s.settings, ...remote, theme: s.settings.theme } }))

@@ -165,7 +165,7 @@ function CategoryForm({ type, category, onDone }: { type: TransactionType; categ
                       onClick={() => field.onChange(name)}
                       className={cn(
                         'grid aspect-square place-items-center rounded-xl border transition-colors',
-                        active ? 'border-primary bg-info-soft text-info' : 'hover:bg-muted',
+                        active ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted',
                       )}
                     >
                       <Icon className="size-5" />

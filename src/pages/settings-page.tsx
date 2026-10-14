@@ -38,15 +38,15 @@ import { useAuthStore } from '@/store/auth-store'
 import { useFinanceStore } from '@/store/finance-store'
 import { useSettingsStore } from '@/store/settings-store'
 import type { ThemePreference } from '@/types/finance'
-import { PageHeader } from './dashboard-page'
+import { PageHeader } from '@/components/layout/page-header'
 
 // ---------------------------------------------------------------------------
 // Estrutura
 // ---------------------------------------------------------------------------
 
-type Section = 'conta' | 'preferencias' | 'categorias' | 'dados'
+export type Section = 'conta' | 'preferencias' | 'categorias' | 'dados'
 
-const SECTIONS: { id: Section; label: string; icon: LucideIcon; description: string }[] = [
+export const SETTINGS_SECTIONS: { id: Section; label: string; icon: LucideIcon; description: string }[] = [
   { id: 'conta', label: 'Conta', icon: User, description: 'Seus dados de acesso e segurança.' },
   { id: 'preferencias', label: 'Preferências', icon: Palette, description: 'Aparência, saldo inicial e avisos.' },
   { id: 'categorias', label: 'Categorias', icon: Tags, description: 'Como seus gastos e receitas são agrupados.' },
@@ -57,7 +57,7 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon; description: str
 function Group({ title, children, footer }: { title?: string; children: ReactNode; footer?: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      {title && <h3 className="px-1 text-sm font-medium text-muted-foreground">{title}</h3>}
+      {title && <h3 className="px-1 text-[13px] font-medium text-muted-foreground">{title}</h3>}
       <Card className="divide-y overflow-hidden">{children}</Card>
       {footer && <p className="px-1 text-xs text-muted-foreground">{footer}</p>}
     </section>
@@ -82,9 +82,7 @@ function Row({
 }) {
   const content = (
     <>
-      <span className={cn('grid size-9 shrink-0 place-items-center rounded-xl', danger ? 'bg-expense-soft text-expense' : 'bg-muted text-muted-foreground')}>
-        <Icon className="size-4.5" />
-      </span>
+      <Icon className={cn('size-[18px] shrink-0', danger ? 'text-expense' : 'text-muted-foreground')} strokeWidth={1.75} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn('text-sm font-medium', danger && 'text-expense')}>{label}</span>
         {value && <span className="truncate text-sm text-muted-foreground">{value}</span>}
@@ -93,7 +91,7 @@ function Row({
       {onClick && <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
     </>
   )
-  const base = 'flex w-full items-center gap-3 px-4 py-3 text-left'
+  const base = 'flex min-h-14 w-full items-center gap-3.5 px-4 py-3 text-left'
   return onClick ? (
     <button type="button" onClick={onClick} className={cn(base, 'transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted')}>
       {content}
@@ -126,7 +124,7 @@ function AccountSection() {
 
   return (
     <>
-      <Card className="flex items-center gap-4 p-4">
+      <div className="flex items-center gap-4 px-1">
         {user.photoURL ? (
           <img src={user.photoURL} alt="" width={56} height={56} referrerPolicy="no-referrer" className="size-14 rounded-full" />
         ) : (
@@ -139,7 +137,7 @@ function AccountSection() {
             <Cloud className="size-3.5" /> Sincronizado na nuvem
           </p>
         </div>
-      </Card>
+      </div>
 
       <Group title="Dados pessoais">
         <Row icon={User} label="Nome" value={user.name ?? 'Sem nome'} onClick={() => setDialog('name')} />
@@ -199,8 +197,8 @@ function ThemePicker() {
             aria-checked={theme === value}
             onClick={() => setTheme(value)}
             className={cn(
-              'flex flex-col items-center gap-1.5 rounded-xl border py-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              theme === value ? 'border-primary bg-info-soft text-info' : 'text-muted-foreground hover:bg-muted',
+              'flex flex-col items-center gap-1.5 rounded-lg border py-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              theme === value ? 'border-foreground bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
             )}
           >
             <Icon className="size-5" />
@@ -304,9 +302,9 @@ function PreferencesSection() {
 // ---------------------------------------------------------------------------
 
 function downloadBackup() {
-  const { categories, subcategories, transactions, installments, recurringCosts, debts } = useFinanceStore.getState()
+  const { categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance } = useFinanceStore.getState()
   const { theme: _theme, ...settings } = useSettingsStore.getState().settings
-  const data = { app: 'financas', exportedAt: new Date().toISOString(), settings, categories, subcategories, transactions, installments, recurringCosts, debts }
+  const data = { app: 'financas', exportedAt: new Date().toISOString(), settings, categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance }
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
   const a = document.createElement('a')
   a.href = url
@@ -349,6 +347,8 @@ function ImportBackupRow() {
           ['parcelamentos', d.installments.length],
           ['fixos', d.recurringCosts.length],
           ['dívidas', d.debts.length],
+          ['veículos', d.vehicles.length],
+          ['lembretes', d.maintenance.length],
           ['categorias', d.categories.length],
           ['subcategorias', d.subcategories.length],
         ] as const
@@ -521,30 +521,39 @@ function DataSection() {
 // Página
 // ---------------------------------------------------------------------------
 
+/** Conteúdo de uma seção; usado na página (desktop) e no menu do cabeçalho (celular). */
+export function SettingsSectionContent({ section }: { section: Section }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-6">
+      {section === 'conta' && <AccountSection />}
+      {section === 'preferencias' && <PreferencesSection />}
+      {section === 'categorias' && <CategoryManager />}
+      {section === 'dados' && <DataSection />}
+    </div>
+  )
+}
+
 export function SettingsPage() {
   const [section, setSection] = useState<Section>('conta')
-  const current = SECTIONS.find((s) => s.id === section)!
+  const current = SETTINGS_SECTIONS.find((s) => s.id === section)!
 
   return (
     <>
       <PageHeader title="Configurações" />
-      <main className="mx-auto grid w-full max-w-4xl grid-cols-[minmax(0,1fr)] gap-6 p-4 sm:p-6 md:grid-cols-[200px_minmax(0,1fr)]">
+      <main className="mx-auto grid w-full max-w-4xl grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 sm:px-6 md:grid-cols-[180px_minmax(0,1fr)]">
         <nav aria-label="Seções" className="md:sticky md:top-20 md:self-start">
-          <ul className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1 md:flex md:flex-col md:bg-transparent md:p-0">
-            {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <ul className="flex gap-1 overflow-x-auto md:flex-col">
+            {SETTINGS_SECTIONS.map(({ id, label }) => (
               <li key={id}>
                 <button
                   type="button"
                   onClick={() => setSection(id)}
                   aria-current={section === id ? 'page' : undefined}
                   className={cn(
-                    'flex h-14 w-full flex-col items-center justify-center gap-1 rounded-xl px-1 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-10 md:flex-row md:justify-start md:gap-2.5 md:px-3 md:text-sm',
-                    section === id
-                      ? 'bg-card text-foreground shadow-sm md:bg-info-soft md:text-info md:shadow-none'
-                      : 'text-muted-foreground hover:text-foreground md:hover:bg-muted',
+                    'flex h-9 w-full items-center whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    section === id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  <Icon className="size-4" />
                   {label}
                 </button>
               </li>
@@ -554,13 +563,10 @@ export function SettingsPage() {
 
         <div className="flex min-w-0 flex-col gap-6">
           <header className="flex flex-col gap-1">
-            <h2 className="text-xl font-semibold">{current.label}</h2>
+            <h2 className="text-xl font-semibold tracking-[-0.01em]">{current.label}</h2>
             <p className="text-sm text-muted-foreground">{current.description}</p>
           </header>
-          {section === 'conta' && <AccountSection />}
-          {section === 'preferencias' && <PreferencesSection />}
-          {section === 'categorias' && <CategoryManager />}
-          {section === 'dados' && <DataSection />}
+          <SettingsSectionContent section={section} />
         </div>
       </main>
     </>

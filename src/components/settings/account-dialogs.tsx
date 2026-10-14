@@ -109,7 +109,7 @@ function EmailForm() {
   if (sentTo)
     return (
       <div className="flex flex-col items-center gap-3 px-5 pb-6 pt-2 text-center">
-        <span className="grid size-12 place-items-center rounded-2xl bg-income-soft text-income">
+        <span className="grid size-12 place-items-center rounded-xl bg-income-soft text-income">
           <MailCheck className="size-6" />
         </span>
         <p className="text-sm">
@@ -152,7 +152,7 @@ const passwordSchema = z
 function Done({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center gap-3 px-5 pb-6 pt-2 text-center">
-      <span className="grid size-12 place-items-center rounded-2xl bg-income-soft text-income">
+      <span className="grid size-12 place-items-center rounded-xl bg-income-soft text-income">
         <CheckCircle2 className="size-6" />
       </span>
       <p role="status" className="text-sm">

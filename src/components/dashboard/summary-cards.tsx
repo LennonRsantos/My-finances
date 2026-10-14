@@ -1,92 +1,77 @@
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CircleCheck, Flame, Landmark, Target, type LucideIcon } from 'lucide-react'
-import { Card } from '@/components/ui/card'
-import { Badge, type Tone } from '@/components/ui/misc'
+import type { Tone } from '@/components/ui/misc'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { HEALTH_LABELS, type FinancialHealth, type MonthSummary } from '@/types/finance'
 
-const healthMeta: Record<FinancialHealth, { tone: Tone; icon: LucideIcon; hint: string }> = {
-  saudavel: { tone: 'income', icon: CircleCheck, hint: 'Receitas cobrem as despesas com folga.' },
-  em_risco: { tone: 'warning', icon: AlertTriangle, hint: 'Despesas acima de 90% da renda ou contas atrasadas.' },
-  no_vermelho: { tone: 'expense', icon: Flame, hint: 'Saldo previsto negativo no fim do mês.' },
+const healthMeta: Record<FinancialHealth, { tone: Tone; hint: string }> = {
+  saudavel: { tone: 'income', hint: 'Receitas cobrem as despesas com folga.' },
+  em_risco: { tone: 'warning', hint: 'Despesas acima de 90% da renda ou contas atrasadas.' },
+  no_vermelho: { tone: 'expense', hint: 'Saldo previsto negativo no fim do mês.' },
 }
 
-export function HealthBadge({ health }: { health: FinancialHealth }) {
-  const { tone, icon: Icon } = healthMeta[health]
+const dot: Record<Tone, string> = {
+  income: 'bg-income',
+  warning: 'bg-warning',
+  expense: 'bg-expense',
+  info: 'bg-info',
+  neutral: 'bg-muted-foreground',
+}
+
+const text: Record<Tone, string> = {
+  income: 'text-income',
+  warning: 'text-warning',
+  expense: 'text-expense',
+  info: 'text-info',
+  neutral: 'text-muted-foreground',
+}
+
+/** Divide "R$ 1.234,56" em parte inteira e centavos para dar peso ao valor. */
+function BigMoney({ value }: { value: number }) {
+  const formatted = formatMoney(value)
+  const comma = formatted.lastIndexOf(',')
+  const whole = comma >= 0 ? formatted.slice(0, comma) : formatted
+  const cents = comma >= 0 ? formatted.slice(comma) : ''
   return (
-    <Badge tone={tone} className="px-3 py-1 text-sm">
-      <Icon className="size-4" />
-      {HEALTH_LABELS[health]}
-    </Badge>
+    <span className={cn('text-[2.5rem] font-semibold leading-none tracking-[-0.03em] tabular-nums sm:text-5xl', value < 0 && 'text-expense')}>
+      {whole}
+      <span className="text-[0.55em] font-medium tracking-normal text-muted-foreground">{cents}</span>
+    </span>
   )
 }
 
-interface StatProps {
-  label: string
-  value: number
-  icon: LucideIcon
-  tone: Tone
-  emphasis?: boolean
-}
-
-const iconTone: Record<Tone, string> = {
-  neutral: 'bg-muted text-muted-foreground',
-  income: 'bg-income-soft text-income',
-  expense: 'bg-expense-soft text-expense',
-  warning: 'bg-warning-soft text-warning',
-  info: 'bg-info-soft text-info',
-}
-
-function Stat({ label, value, icon: Icon, tone, emphasis }: StatProps) {
+function Figure({ label, value, tone, sign, className }: { label: string; value: number; tone?: Tone; sign?: '+' | '−'; className?: string }) {
   return (
-    <Card className={cn('flex flex-col gap-3 p-4', emphasis && 'col-span-2 lg:col-span-1')}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-muted-foreground">{label}</span>
-        <span className={cn('grid size-9 place-items-center rounded-xl', iconTone[tone])}>
-          <Icon className="size-[18px]" />
-        </span>
-      </div>
-      <span className={cn('text-xl font-semibold tracking-tight sm:text-2xl', value < 0 && 'text-expense')}>
+    <div className={cn('flex flex-col gap-1 px-4 py-3.5 sm:px-5', className)}>
+      <dt className="text-[13px] text-muted-foreground">{label}</dt>
+      <dd className={cn('text-[17px] font-semibold tabular-nums tracking-[-0.01em]', tone && text[tone], value < 0 && 'text-expense')}>
+        {sign && value !== 0 && <span aria-hidden>{sign} </span>}
         {formatMoney(value)}
-      </span>
-    </Card>
+      </dd>
+    </div>
   )
 }
 
-export function SummaryCards({ summary }: { summary: MonthSummary }) {
-  const projectedTone: Tone = summary.projectedEndBalance < 0 ? 'expense' : 'info'
-  return (
-    <section aria-label="Resumo do mês" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <Stat emphasis label="Saldo atual" value={summary.currentBalance} icon={Landmark} tone="info" />
-      <Stat label="Receitas do mês" value={summary.monthIncome} icon={ArrowUpRight} tone="income" />
-      <Stat label="Despesas do mês" value={summary.monthExpenses} icon={ArrowDownRight} tone="expense" />
-      <Stat
-        emphasis
-        label="Saldo previsto no fim do mês"
-        value={summary.projectedEndBalance}
-        icon={Target}
-        tone={projectedTone}
-      />
-    </section>
-  )
-}
-
-export function HealthBanner({ summary }: { summary: MonthSummary }) {
+/** Resumo do mês como um extrato: saldo em destaque e o movimento logo abaixo. */
+export function MonthStatement({ summary }: { summary: MonthSummary }) {
   const { tone, hint } = healthMeta[summary.health]
-  const border: Record<Tone, string> = {
-    neutral: '',
-    info: '',
-    income: 'border-income/30',
-    warning: 'border-warning/40',
-    expense: 'border-expense/40',
-  }
   return (
-    <Card className={cn('flex flex-wrap items-center justify-between gap-3 p-4', border[tone])}>
-      <div className="flex flex-col gap-1">
-        <span className="text-sm text-muted-foreground">Saúde financeira do mês</span>
-        <span className="text-sm">{hint}</span>
+    <section aria-label="Resumo do mês" className="rounded-xl border bg-card">
+      <div className="flex flex-col gap-4 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Saldo atual</h2>
+          <span className={cn('inline-flex items-center gap-2 text-sm font-medium', text[tone])}>
+            <span className={cn('size-2 rounded-full', dot[tone])} aria-hidden />
+            {HEALTH_LABELS[summary.health]}
+          </span>
+        </div>
+        <BigMoney value={summary.currentBalance} />
+        <p className="text-sm text-muted-foreground">{hint}</p>
       </div>
-      <HealthBadge health={summary.health} />
-    </Card>
+      <dl className="grid grid-cols-2 border-t sm:grid-cols-3 [&>div+div]:border-l [&>div:nth-child(3)]:col-span-2 [&>div:nth-child(3)]:border-l-0 [&>div:nth-child(3)]:border-t sm:[&>div:nth-child(3)]:col-span-1 sm:[&>div:nth-child(3)]:border-l sm:[&>div:nth-child(3)]:border-t-0">
+        <Figure label="Receitas do mês" value={summary.monthIncome} tone="income" sign="+" />
+        <Figure label="Despesas do mês" value={summary.monthExpenses} tone="expense" sign="−" />
+        <Figure label="Previsto no fim do mês" value={summary.projectedEndBalance} />
+      </dl>
+    </section>
   )
 }

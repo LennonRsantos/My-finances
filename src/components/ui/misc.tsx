@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function Skeleton({ className, ...props }: ComponentProps<'div'>) {
-  return <div className={cn('animate-pulse rounded-xl bg-muted', className)} {...props} />
+  return <div className={cn('animate-pulse rounded-lg bg-muted', className)} {...props} />
 }
 
 export type Tone = 'neutral' | 'income' | 'expense' | 'warning' | 'info'
@@ -45,7 +45,7 @@ export function Progress({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(value * 100)}
-      className={cn('h-2 w-full overflow-hidden rounded-full bg-muted', className)}
+      className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', className)}
     >
       <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${pct}%`, background: color }} />
     </div>
@@ -67,9 +67,7 @@ export function EmptyState({
 }) {
   return (
     <div className={cn('flex flex-col items-center justify-center gap-2 px-4 py-10 text-center', className)}>
-      <div className="grid size-12 place-items-center rounded-2xl bg-muted text-muted-foreground">
-        <Icon className="size-6" />
-      </div>
+      <Icon className="mb-1 size-6 text-muted-foreground" strokeWidth={1.5} />
       <p className="font-medium">{title}</p>
       {description && <p className="max-w-xs text-sm text-muted-foreground">{description}</p>}
       {action && <div className="mt-2">{action}</div>}

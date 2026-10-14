@@ -100,7 +100,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
     <form noValidate onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-5 overflow-y-auto px-5 pb-4">
         {inSeries && (
-          <div className="flex flex-col gap-2 rounded-2xl border p-3">
+          <div className="flex flex-col gap-2 rounded-xl border p-3">
             <p className="flex items-center gap-2 text-sm font-medium">
               {t.installment ? (
                 <Layers className="size-4 text-muted-foreground" />
@@ -265,7 +265,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
           control={control}
           name="paid"
           render={({ field }) => (
-            <div className="flex items-center justify-between gap-4 rounded-2xl border p-3">
+            <div className="flex items-center justify-between gap-4 rounded-xl border p-3">
               <Label htmlFor="edit-paid">{isIncome ? 'Recebido' : payTo ? `Enviado para ${payTo}` : 'Pago'}</Label>
               <Switch id="edit-paid" checked={field.value} onCheckedChange={field.onChange} />
             </div>

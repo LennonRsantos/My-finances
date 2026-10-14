@@ -68,7 +68,7 @@ export function CategoryDonut({ data }: { data: CategorySpending[] }) {
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
                 <span className="text-xs text-muted-foreground">{focus ? focus.category.name : 'Total'}</span>
-                <span className="text-lg font-semibold">{formatMoney(focus ? focus.total : total)}</span>
+                <span className="text-lg font-semibold tabular-nums tracking-[-0.01em]">{formatMoney(focus ? focus.total : total)}</span>
               </div>
             </div>
 
@@ -85,11 +85,10 @@ export function CategoryDonut({ data }: { data: CategorySpending[] }) {
                       hovered && hovered !== d.category.id && 'opacity-50',
                     )}
                   >
-                    <span className="grid size-7 shrink-0 place-items-center rounded-lg text-white" style={{ background: d.category.color }}>
-                      <Icon className="size-3.5" />
-                    </span>
+                    <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: d.category.color }} aria-hidden />
+                    <Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
                     <span className="min-w-0 flex-1 truncate">{d.category.name}</span>
-                    <span className="text-muted-foreground">{pct(d.share)}</span>
+                    <span className="tabular-nums text-muted-foreground">{pct(d.share)}</span>
                     <span className="w-24 shrink-0 text-right font-medium tabular-nums">{formatMoney(d.total)}</span>
                   </li>
                 )

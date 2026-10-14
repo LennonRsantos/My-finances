@@ -38,7 +38,7 @@ export function TransactionDialog() {
 
       <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex justify-center px-4 lg:bottom-6">
         {toast && (
-          <div className="flex items-center gap-2 rounded-2xl bg-foreground px-4 py-3 text-sm text-background shadow-lg">
+          <div className="flex items-center gap-2 rounded-xl bg-foreground px-4 py-3 text-sm text-background shadow-lg">
             <CircleCheck className="size-4 text-income" />
             {toast}
           </div>
