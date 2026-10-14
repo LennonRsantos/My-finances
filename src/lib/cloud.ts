@@ -25,7 +25,8 @@ import {
   type Unsubscribe,
   type WriteBatch,
 } from 'firebase/firestore'
-import type { Category, Debt, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
+import type { CutPlan } from './recovery'
+import type { Category, Cents, Debt, DebtStrategy, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
 import { DEFAULT_CATEGORIES_VERSION, missingDefaults } from '@/data/mock'
 import { getFirebase } from './firebase'
 
@@ -91,6 +92,20 @@ export function subscribeSettings(
   onError: (e: unknown) => void,
 ): Unsubscribe {
   return onSnapshot(userDoc(uid), (snap) => onData((snap.data()?.settings as CloudSettings | undefined) ?? null), onError)
+}
+
+/** Plano do Sair do vermelho (cortes, estratégia de dívidas). */
+export interface CloudRecovery extends CutPlan {
+  strategy: DebtStrategy
+  debtExtra: Cents | null
+}
+
+export function subscribeRecovery(
+  uid: string,
+  onData: (recovery: CloudRecovery | null) => void,
+  onError: (e: unknown) => void,
+): Unsubscribe {
+  return onSnapshot(userDoc(uid), (snap) => onData((snap.data()?.recovery as CloudRecovery | undefined) ?? null), onError)
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +180,10 @@ export async function ensureDefaultCategories(uid: string) {
 
 export function saveSettings(uid: string, settings: CloudSettings) {
   return setDoc(userDoc(uid), { settings }, { merge: true })
+}
+
+export function saveRecovery(uid: string, recovery: CloudRecovery) {
+  return setDoc(userDoc(uid), { recovery }, { merge: true })
 }
 
 /** Grava (cria ou substitui) vários documentos em lote. */

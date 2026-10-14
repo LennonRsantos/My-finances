@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
-import { AuthGate, SyncErrorBanner } from '@/components/layout/auth-gate'
+import { AuthGate, LocalModeBanner, SyncErrorBanner } from '@/components/layout/auth-gate'
 import { EditTransactionDialog } from '@/components/transactions/edit-transaction-dialog'
 import { TransactionDialog } from '@/components/transactions/transaction-dialog'
 import { useCloudSync } from '@/hooks/use-cloud-sync'
@@ -37,6 +37,7 @@ export default function App() {
   return (
     <AuthGate>
       <AppShell>
+        <LocalModeBanner />
         <SyncErrorBanner />
         <Page />
         <TransactionDialog />

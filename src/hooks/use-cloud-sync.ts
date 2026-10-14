@@ -1,10 +1,19 @@
 import { onAuthStateChanged } from 'firebase/auth'
 import type { Unsubscribe } from 'firebase/firestore'
 import { useEffect } from 'react'
-import { ensureDefaultCategories, seedUserIfNew, subscribeCollection, subscribeSettings, toCloudSettings } from '@/lib/cloud'
+import {
+  ensureDefaultCategories,
+  saveRecovery,
+  seedUserIfNew,
+  subscribeCollection,
+  subscribeRecovery,
+  subscribeSettings,
+  toCloudSettings,
+} from '@/lib/cloud'
 import { getFirebase, isFirebaseConfigured } from '@/lib/firebase'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { initialFinanceData, useFinanceStore } from '@/store/finance-store'
+import { initialRecovery, recoveryData, useRecoveryStore } from '@/store/recovery-store'
 import { defaultSettings, useSettingsStore } from '@/store/settings-store'
 
 /** Liga os dados do usuário logado ao Firestore. Retorna função de desligar. */
@@ -49,6 +58,14 @@ async function startSync(uid: string): Promise<Unsubscribe> {
       if (!remote) return
       useSettingsStore.setState((s) => ({ settings: { ...s.settings, ...remote, theme: s.settings.theme } }))
     }, reportSyncError),
+    subscribeRecovery(uid, (remote) => {
+      // Conta sem plano ainda: leva o que estava no aparelho.
+      if (!remote) {
+        saveRecovery(uid, recoveryData(useRecoveryStore.getState())).catch(reportSyncError)
+        return
+      }
+      useRecoveryStore.setState({ ...initialRecovery, ...remote })
+    }, reportSyncError),
   ]
   return () => unsubs.forEach((u) => u())
 }
@@ -70,6 +87,7 @@ export function useCloudSync() {
         // Saiu: limpa a tela para não expor dados da conta anterior.
         useFinanceStore.setState(initialFinanceData())
         useSettingsStore.setState((s) => ({ settings: { ...defaultSettings, theme: s.settings.theme } }))
+        useRecoveryStore.setState(initialRecovery)
         setAuth({ status: 'signed_out', user: null, dataLoaded: false, recurringLoaded: false, syncError: null })
         return
       }

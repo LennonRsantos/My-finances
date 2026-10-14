@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { createJSONStorage, persist } from 'zustand/middleware'
+import { persist } from 'zustand/middleware'
 import type { Category, Debt, Installment, ISODate, MaintenanceReminder, RecurringCost, Subcategory, Transaction, Vehicle } from '@/types/finance'
 import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
@@ -8,6 +8,7 @@ import { generateInstallments, type InstallmentPurchaseInput } from '@/lib/finan
 import { addDaysISO, todayISO } from '@/lib/dates'
 import { pendingOccurrences } from '@/lib/recurring'
 import { currentUid, reportSyncError } from './auth-store'
+import { localOnlyStorage } from './local-storage'
 
 export type EditScope = 'one' | 'future'
 
@@ -418,7 +419,8 @@ export const useFinanceStore = create<FinanceState>()(
         }
         return state
       },
-      storage: createJSONStorage(() => localStorage),
+      // Logado, o Firestore é a fonte; o navegador só guarda o modo sem login.
+      storage: localOnlyStorage,
       partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance }) => ({
         categories,
         subcategories,
