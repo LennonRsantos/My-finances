@@ -15,7 +15,7 @@ export type SpendingGroup = 'essencial' | 'dividas' | 'estilo'
 const ESSENTIAL_CATEGORIES = new Set(['cat-moradia', 'cat-alimentacao', 'cat-transporte', 'cat-veiculo', 'cat-saude', 'cat-educacao'])
 const DEBT_CATEGORIES = new Set(['cat-emprestimos'])
 /** Dentro de categorias essenciais, mas cortáveis. */
-const LIFESTYLE_SUBCATEGORIES = new Set(['sub-delivery', 'sub-restaurante', 'sub-app', 'sub-veiculo-lavagem'])
+const LIFESTYLE_SUBCATEGORIES = new Set(['sub-delivery', 'sub-restaurante', 'sub-app', 'sub-veiculo-lavagem', 'sub-casa-moveis'])
 
 export function groupOf(t: Pick<Transaction, 'categoryId' | 'subcategoryId' | 'installment'>): SpendingGroup {
   if (t.installment || DEBT_CATEGORIES.has(t.categoryId)) return 'dividas'

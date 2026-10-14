@@ -7,7 +7,7 @@ import { toCents } from '@/lib/money'
  * Versão das categorias padrão. Ao incluir novas, suba o número: contas
  * existentes recebem só as que faltam (por id), sem sobrescrever edições.
  */
-export const DEFAULT_CATEGORIES_VERSION = 3
+export const DEFAULT_CATEGORIES_VERSION = 4
 
 export const mockCategories: Category[] = [
   { id: 'cat-moradia', name: 'Moradia', type: 'despesa', color: '#6366f1', icon: 'house', monthlyBudget: toCents(2200) },
@@ -33,6 +33,11 @@ export const mockSubcategories: Subcategory[] = [
   { id: 'sub-condominio', categoryId: 'cat-moradia', name: 'Condomínio', monthlyBudget: null },
   { id: 'sub-iptu', categoryId: 'cat-moradia', name: 'IPTU', icon: 'receipt', monthlyBudget: null },
   { id: 'sub-casa-manutencao', categoryId: 'cat-moradia', name: 'Manutenção e reparos', icon: 'wrench', monthlyBudget: null },
+  { id: 'sub-casa-financiamento', categoryId: 'cat-moradia', name: 'Financiamento do imóvel', icon: 'landmark', monthlyBudget: null },
+  { id: 'sub-casa-limpeza', categoryId: 'cat-moradia', name: 'Limpeza e higiene da casa', monthlyBudget: null },
+  { id: 'sub-casa-utensilios', categoryId: 'cat-moradia', name: 'Utensílios e cozinha', monthlyBudget: null },
+  { id: 'sub-casa-eletro', categoryId: 'cat-moradia', name: 'Eletrodomésticos e eletrônicos', icon: 'zap', monthlyBudget: null },
+  { id: 'sub-casa-moveis', categoryId: 'cat-moradia', name: 'Móveis e decoração', icon: 'house', monthlyBudget: null },
   { id: 'sub-mercado', categoryId: 'cat-alimentacao', name: 'Mercado', monthlyBudget: null },
   { id: 'sub-delivery', categoryId: 'cat-alimentacao', name: 'Delivery', monthlyBudget: toCents(300) },
   { id: 'sub-restaurante', categoryId: 'cat-alimentacao', name: 'Restaurante', monthlyBudget: null },
@@ -62,6 +67,11 @@ const INTRODUCED_IN: Record<string, number> = {
   'sub-condominio': 3,
   'sub-iptu': 3,
   'sub-casa-manutencao': 3,
+  'sub-casa-financiamento': 4,
+  'sub-casa-limpeza': 4,
+  'sub-casa-utensilios': 4,
+  'sub-casa-eletro': 4,
+  'sub-casa-moveis': 4,
 }
 const introducedIn = (id: string) => INTRODUCED_IN[id] ?? 2
 

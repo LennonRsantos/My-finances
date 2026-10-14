@@ -418,7 +418,8 @@ export const useFinanceStore = create<FinanceState>()(
       // v5: dívidas do plano Sair do vermelho.
       // v6: veículos e lembretes de manutenção.
       // v7: subcategorias da casa (água, gás, condomínio, IPTU, manutenção).
-      version: 7,
+      // v8: financiamento do imóvel e compras da casa.
+      version: 8,
       migrate: (persisted, version) => {
         let state = persisted as FinanceData
         if (version < 2) {
@@ -443,6 +444,10 @@ export const useFinanceStore = create<FinanceState>()(
         if (version < 6) state = { ...state, vehicles: [], maintenance: [] }
         if (version < 7) {
           const missing = missingDefaults(state.categories, state.subcategories, 2)
+          state = { ...state, subcategories: [...state.subcategories, ...missing.subcategories] }
+        }
+        if (version < 8) {
+          const missing = missingDefaults(state.categories, state.subcategories, 3)
           state = { ...state, subcategories: [...state.subcategories, ...missing.subcategories] }
         }
         return state

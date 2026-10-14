@@ -9,8 +9,18 @@ import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
 import { todayISO } from '@/lib/dates'
+import { formatMoney } from '@/lib/money'
 import { cents, date, money, nowISO, optionalMoney } from '@/lib/form-fields'
-import { BILL_ORDER, HOME_CATEGORY_ID, HOME_MAINTENANCE_SUBCATEGORY_ID, HOME_REMINDERS } from '@/lib/home'
+import {
+  BILL_ORDER,
+  FINANCING_SUBCATEGORY_ID,
+  HOME_CATEGORY_ID,
+  HOME_MAINTENANCE_SUBCATEGORY_ID,
+  HOME_REMINDERS,
+  IPTU_SUBCATEGORY_ID,
+  PURCHASE_SUBCATEGORIES,
+  RENT_SUBCATEGORY_ID,
+} from '@/lib/home'
 import { createId } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { PAYMENT_METHODS, type ISODate, type MaintenanceReminder, type PaymentMethod, type RecurringCost, type Transaction } from '@/types/finance'
@@ -19,6 +29,10 @@ export type HomeDialogState =
   | { kind: 'bill'; subcategoryId?: string }
   | { kind: 'reminder'; reminder?: MaintenanceReminder }
   | { kind: 'complete'; reminder: MaintenanceReminder }
+  | { kind: 'rent' }
+  | { kind: 'financing' }
+  | { kind: 'iptu' }
+  | { kind: 'purchase' }
   | null
 
 function homeExpense(fields: Pick<Transaction, 'description' | 'amount' | 'subcategoryId' | 'dueDate' | 'paymentMethod'> & { paid: boolean }): Transaction {
@@ -56,7 +70,7 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
     useShallow((s) => ({ subcategories: s.subcategories, addTransaction: s.addTransaction, addRecurringCost: s.addRecurringCost })),
   )
   const options = subcategories
-    .filter((sc) => sc.categoryId === HOME_CATEGORY_ID)
+    .filter((sc) => sc.categoryId === HOME_CATEGORY_ID && !PURCHASE_SUBCATEGORIES.includes(sc.id) && sc.id !== FINANCING_SUBCATEGORY_ID)
     .sort((a, b) => {
       const ia = BILL_ORDER.indexOf(a.id)
       const ib = BILL_ORDER.indexOf(b.id)
@@ -332,10 +346,351 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Moradia: aluguel, financiamento, IPTU
+// ---------------------------------------------------------------------------
+
+/** Fixo da casa a partir de um vencimento. */
+function homeRecurring(
+  fields: { description: string; amount: number; subcategoryId: string; due: ISODate; paymentMethod: PaymentMethod },
+  frequency: 'mensal' | 'anual',
+): RecurringCost {
+  const base = {
+    id: createId(),
+    description: fields.description,
+    amount: fields.amount,
+    type: 'despesa' as const,
+    categoryId: HOME_CATEGORY_ID,
+    subcategoryId: fields.subcategoryId,
+    paymentMethod: fields.paymentMethod,
+    dueDay: Number(fields.due.slice(8, 10)),
+    autoRenew: true,
+    isSubscription: false,
+    active: true,
+    startDate: fields.due,
+    endDate: null,
+    lastGeneratedMonth: null,
+    payTo: null,
+    createdAt: nowISO(),
+  }
+  return frequency === 'mensal' ? { ...base, frequency: 'mensal' } : { ...base, frequency: 'anual', dueMonth: Number(fields.due.slice(5, 7)) }
+}
+
+const rentSchema = z.object({ amount: money('Informe o valor do aluguel'), date, paid: z.boolean(), paymentMethod: z.enum(PAYMENT_METHODS) })
+
+function RentForm({ onDone }: { onDone: () => void }) {
+  const addRecurringCost = useFinanceStore((s) => s.addRecurringCost)
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(rentSchema),
+    defaultValues: { amount: '', date: todayISO(), paid: false, paymentMethod: 'pix' as PaymentMethod },
+  })
+  const [paid, paymentMethod] = useWatch({ control, name: ['paid', 'paymentMethod'] })
+  const e = formState.errors
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit((v) => {
+        addRecurringCost(
+          homeRecurring(
+            { description: 'Aluguel', amount: cents(v.amount), subcategoryId: RENT_SUBCATEGORY_ID, due: v.date as ISODate, paymentMethod: v.paymentMethod },
+            'mensal',
+          ),
+          v.paid,
+        )
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="rent-amount" label="Valor por mês" error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="rent-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="rent-date" label="Próximo vencimento" error={e.date?.message}>
+            <Input id="rent-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">Repete todo mês. Condomínio, se houver, cadastre em Conta &gt; Condomínio.</p>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Este mês já está pago</span>
+          <Switch checked={paid} onCheckedChange={(x) => setValue('paid', x)} aria-label="Este mês já está pago" />
+        </label>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+      </div>
+      <FormActions submitLabel="Salvar aluguel" />
+    </form>
+  )
+}
+
+const wholeNumber = (v: string) => /^\d+$/.test(v)
+
+const financingSchema = z
+  .object({
+    bank: z.string().trim().max(40),
+    amount: money('Informe o valor da parcela'),
+    current: z.string().trim().refine((v) => wholeNumber(v) && Number(v) >= 1, 'Número da parcela'),
+    total: z.string().trim().refine((v) => wholeNumber(v) && Number(v) >= 2 && Number(v) <= 480, 'De 2 a 480'),
+    date,
+    paymentMethod: z.enum(PAYMENT_METHODS),
+  })
+  .refine((v) => Number(v.current) <= Number(v.total), { path: ['current'], message: 'Maior que o total' })
+
+function FinancingForm({ onDone }: { onDone: () => void }) {
+  const add = useFinanceStore((s) => s.addInstallmentPurchase)
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(financingSchema),
+    defaultValues: { bank: '', amount: '', current: '1', total: '', date: todayISO(), paymentMethod: 'boleto' as PaymentMethod },
+  })
+  const [paymentMethod, current, total] = useWatch({ control, name: ['paymentMethod', 'current', 'total'] })
+  const remaining = Number(total) >= Number(current) && Number(current) >= 1 ? Number(total) - Number(current) + 1 : null
+  const e = formState.errors
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit((v) => {
+        const parcela = cents(v.amount)
+        add({
+          description: 'Financiamento do imóvel',
+          totalAmount: parcela * Number(v.total),
+          totalInstallments: Number(v.total),
+          startAt: Number(v.current),
+          firstDueDate: v.date as ISODate,
+          categoryId: HOME_CATEGORY_ID,
+          subcategoryId: FINANCING_SUBCATEGORY_ID,
+          paymentMethod: v.paymentMethod,
+          accountName: v.bank || 'Financiamento',
+        })
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <Field id="fin-bank" label="Banco (opcional)">
+          <Input id="fin-bank" placeholder="Ex.: Caixa, Itaú" {...register('bank')} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="fin-amount" label="Valor da parcela" error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="fin-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="fin-date" label="Vencimento da próxima" error={e.date?.message}>
+            <Input id="fin-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="fin-current" label="Próxima parcela é a" error={e.current?.message}>
+            <Input id="fin-current" inputMode="numeric" aria-invalid={!!e.current} {...register('current')} />
+          </Field>
+          <Field id="fin-total" label="De quantas" error={e.total?.message}>
+            <Input id="fin-total" inputMode="numeric" placeholder="Ex.: 360" aria-invalid={!!e.total} {...register('total')} />
+          </Field>
+        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {remaining ? `Lança as ${remaining} parcelas que faltam, uma por mês.` : 'Ex.: na 25ª de 360 parcelas, preencha 25 e 360.'} Se a parcela muda
+          de valor (SAC), ajuste depois em Lançamentos.
+        </p>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+      </div>
+      <FormActions submitLabel="Salvar financiamento" />
+    </form>
+  )
+}
+
+const iptuSchema = z
+  .object({
+    amount: money('Informe o valor do IPTU'),
+    mode: z.enum(['avista', 'parcelado']),
+    quotas: z.string().trim(),
+    date,
+    paymentMethod: z.enum(PAYMENT_METHODS),
+  })
+  .refine((v) => v.mode === 'avista' || (wholeNumber(v.quotas) && Number(v.quotas) >= 2 && Number(v.quotas) <= 12), {
+    path: ['quotas'],
+    message: 'De 2 a 12 cotas',
+  })
+
+function IptuForm({ onDone }: { onDone: () => void }) {
+  const { addRecurringCost, addInstallmentPurchase } = useFinanceStore(
+    useShallow((s) => ({ addRecurringCost: s.addRecurringCost, addInstallmentPurchase: s.addInstallmentPurchase })),
+  )
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(iptuSchema),
+    defaultValues: { amount: '', mode: 'avista' as 'avista' | 'parcelado', quotas: '10', date: todayISO(), paymentMethod: 'boleto' as PaymentMethod },
+  })
+  const [mode, paymentMethod, amount, quotas] = useWatch({ control, name: ['mode', 'paymentMethod', 'amount', 'quotas'] })
+  const e = formState.errors
+  const perQuota = mode === 'parcelado' && cents(amount) > 0 && Number(quotas) >= 2 ? Math.round(cents(amount) / Number(quotas)) : null
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit((v) => {
+        const due = v.date as ISODate
+        if (v.mode === 'avista') {
+          addRecurringCost(
+            homeRecurring({ description: 'IPTU', amount: cents(v.amount), subcategoryId: IPTU_SUBCATEGORY_ID, due, paymentMethod: v.paymentMethod }, 'anual'),
+            false,
+          )
+        } else {
+          addInstallmentPurchase({
+            description: `IPTU ${due.slice(0, 4)}`,
+            totalAmount: cents(v.amount),
+            totalInstallments: Number(v.quotas),
+            firstDueDate: due,
+            categoryId: HOME_CATEGORY_ID,
+            subcategoryId: IPTU_SUBCATEGORY_ID,
+            paymentMethod: v.paymentMethod,
+            accountName: 'Prefeitura',
+          })
+        }
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <div className="flex flex-col gap-2">
+          <Label>Como você paga</Label>
+          <Choices
+            label="Como você paga"
+            value={mode}
+            onChange={(x) => setValue('mode', x)}
+            options={[
+              { value: 'avista', label: 'À vista' },
+              { value: 'parcelado', label: 'Em cotas' },
+            ]}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="iptu-amount" label="Valor total do ano" error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="iptu-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="iptu-date" label={mode === 'avista' ? 'Vencimento' : 'Vencimento da 1ª cota'} error={e.date?.message}>
+            <Input id="iptu-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        {mode === 'parcelado' && (
+          <Field id="iptu-quotas" label="Número de cotas" error={e.quotas?.message} hint={perQuota ? `${formatMoney(perQuota)} por cota, uma por mês.` : undefined}>
+            <Input id="iptu-quotas" inputMode="numeric" aria-invalid={!!e.quotas} {...register('quotas')} />
+          </Field>
+        )}
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {mode === 'avista' ? 'Repete todo ano no mesmo dia.' : 'Lança as cotas deste ano. No ano que vem, cadastre o novo carnê.'}
+        </p>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+      </div>
+      <FormActions submitLabel="Salvar IPTU" />
+    </form>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Compras da casa
+// ---------------------------------------------------------------------------
+
+const purchaseSchema = z.object({
+  subcategoryId: z.string().min(1, 'Escolha o tipo'),
+  description: z.string().trim().min(2, 'O que foi comprado?').max(80, 'Máximo de 80 caracteres'),
+  amount: money('Informe o valor'),
+  date,
+  repeat: z.enum(['nao', 'mensal', 'anual']),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+})
+
+function PurchaseForm({ onDone }: { onDone: () => void }) {
+  const { subcategories, addTransaction, addRecurringCost } = useFinanceStore(
+    useShallow((s) => ({ subcategories: s.subcategories, addTransaction: s.addTransaction, addRecurringCost: s.addRecurringCost })),
+  )
+  const options = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
+    .filter((sc): sc is NonNullable<typeof sc> => !!sc)
+    .map((sc) => ({ value: sc.id, label: sc.name }))
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(purchaseSchema),
+    defaultValues: {
+      subcategoryId: '',
+      description: '',
+      amount: '',
+      date: todayISO(),
+      repeat: 'nao' as 'nao' | 'mensal' | 'anual',
+      paymentMethod: 'pix' as PaymentMethod,
+    },
+  })
+  const [subcategoryId, repeat, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'repeat', 'paymentMethod'] })
+  const e = formState.errors
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit((v) => {
+        const fields = { description: v.description, amount: cents(v.amount), subcategoryId: v.subcategoryId, paymentMethod: v.paymentMethod }
+        if (v.repeat === 'nao') addTransaction(homeExpense({ ...fields, dueDate: v.date as ISODate, paid: true }))
+        else addRecurringCost(homeRecurring({ ...fields, due: v.date as ISODate }, v.repeat), true)
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <div className="flex flex-col gap-2">
+          <Label>Tipo</Label>
+          <Choices label="Tipo" value={subcategoryId} onChange={(x) => setValue('subcategoryId', x, { shouldValidate: true })} options={options} />
+          <FieldError message={e.subcategoryId?.message} />
+        </div>
+        <Field id="p-desc" label="O que foi comprado" error={e.description?.message}>
+          <Input id="p-desc" placeholder="Ex.: produtos de limpeza, panela, geladeira" aria-invalid={!!e.description} {...register('description')} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="p-amount" label="Valor" error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="p-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="p-date" label="Data" error={e.date?.message}>
+            <Input id="p-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Compra que se repete?</Label>
+          <Choices
+            label="Compra que se repete?"
+            value={repeat}
+            onChange={(x) => setValue('repeat', x)}
+            options={[
+              { value: 'nao', label: 'Não' },
+              { value: 'mensal', label: 'Todo mês' },
+              { value: 'anual', label: 'Todo ano' },
+            ]}
+          />
+          <p className="text-xs text-muted-foreground">Ex.: produtos de limpeza todo mês. Compra parcelada: use Lançamentos &gt; Parcelado.</p>
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+      </div>
+      <FormActions submitLabel="Salvar compra" />
+    </form>
+  )
+}
+
 const titles = {
   bill: { title: 'Conta da casa', description: 'Entra em Lançamentos na categoria Moradia.' },
   reminder: { title: 'Lembrete da casa', description: 'O app avisa 30 dias antes de vencer.' },
   complete: { title: 'Feito', description: 'Registrar que o cuidado foi feito.' },
+  rent: { title: 'Aluguel', description: 'Lançado todo mês na categoria Moradia.' },
+  financing: { title: 'Financiamento do imóvel', description: 'As parcelas entram em Lançamentos e no Sair do vermelho.' },
+  iptu: { title: 'IPTU', description: 'Imposto anual do imóvel.' },
+  purchase: { title: 'Compra para a casa', description: 'Itens da casa, não pessoais.' },
 }
 
 export function HomeDialogs({ state, onClose }: { state: HomeDialogState; onClose: () => void }) {
@@ -350,6 +705,10 @@ export function HomeDialogs({ state, onClose }: { state: HomeDialogState; onClos
         {state?.kind === 'bill' && <BillForm subcategoryId={state.subcategoryId} onDone={onClose} />}
         {state?.kind === 'reminder' && <ReminderForm reminder={state.reminder} onDone={onClose} />}
         {state?.kind === 'complete' && <CompleteForm reminder={state.reminder} onDone={onClose} />}
+        {state?.kind === 'rent' && <RentForm onDone={onClose} />}
+        {state?.kind === 'financing' && <FinancingForm onDone={onClose} />}
+        {state?.kind === 'iptu' && <IptuForm onDone={onClose} />}
+        {state?.kind === 'purchase' && <PurchaseForm onDone={onClose} />}
       </DialogContent>
     </Dialog>
   )

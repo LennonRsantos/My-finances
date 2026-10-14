@@ -1,14 +1,18 @@
 import {
   Building2,
   Check,
+  ChevronRight,
   CheckCircle2,
   Droplet,
   Flame,
   House,
   KeyRound,
+  Landmark,
+  Pencil,
   Plus,
   Receipt,
   Repeat,
+  ShoppingBasket,
   TrendingDown,
   TrendingUp,
   Wifi,
@@ -16,23 +20,23 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MonthSelector } from '@/components/dashboard/month-selector'
 import { HomeDialogs, type HomeDialogState } from '@/components/home/home-dialogs'
-import { RecurringRows } from '@/components/recurring/recurring-dialog'
+import { RecurringDialog, RecurringRows } from '@/components/recurring/recurring-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
 import { formatDateShort, formatMonthLabel, todayISO } from '@/lib/dates'
 import { resolveStatus } from '@/lib/finance'
-import { compareBills, HOME_CATEGORY_ID, homeMonth } from '@/lib/home'
+import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseSummary } from '@/lib/home'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { reminderStatus, type ReminderLevel } from '@/lib/vehicle'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
-import type { TransactionStatus } from '@/types/finance'
+import type { RecurringCost, TransactionStatus } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 
 const billIcon: Record<string, LucideIcon> = {
@@ -70,7 +74,7 @@ function BillsCard({ open }: { open: (d: HomeDialogState) => void }) {
   const month = useUIStore((s) => s.selectedMonth)
   const edit = useUIStore((s) => s.setEditingTransaction)
   const today = todayISO()
-  const data = homeMonth(transactions, month, today)
+  const data = homeMonth(transactions, month, today, 'contas')
   const subName = (id: string | null) => subcategories.find((s) => s.id === id)?.name ?? 'Moradia'
 
   return (
@@ -295,6 +299,232 @@ function MaintenanceCard({ open }: { open: (d: HomeDialogState) => void }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Sua moradia: aluguel, financiamento, IPTU
+// ---------------------------------------------------------------------------
+
+function HousingRow({
+  icon: Icon,
+  title,
+  value,
+  detail,
+  action,
+}: {
+  icon: LucideIcon
+  title: string
+  value?: string
+  detail: string
+  action: ReactNode
+}) {
+  return (
+    <li className="flex items-center gap-3 py-3">
+      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">
+          {title}
+          {value && <span className="tabular-nums"> · {value}</span>}
+        </span>
+        <span className="block text-xs text-muted-foreground">{detail}</span>
+      </span>
+      {action}
+    </li>
+  )
+}
+
+function HousingCard({ open }: { open: (d: HomeDialogState) => void }) {
+  const { recurringCosts, installments, transactions } = useFinanceStore(
+    useShallow((s) => ({ recurringCosts: s.recurringCosts, installments: s.installments, transactions: s.transactions })),
+  )
+  const edit = useUIStore((s) => s.setEditingTransaction)
+  const [editing, setEditing] = useState<RecurringCost | null>(null)
+  const h = housingStatus(recurringCosts, installments, transactions)
+  const nextOf = (installmentId: string) =>
+    transactions
+      .filter((t) => t.installment?.installmentId === installmentId && t.status !== 'pago')
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]
+  const add = (kind: 'rent' | 'financing' | 'iptu') => (
+    <Button size="sm" variant="outline" onClick={() => open({ kind })}>
+      <Plus />
+      Adicionar
+    </Button>
+  )
+  const editButton = (label: string, onClick: () => void) => (
+    <Button size="icon" variant="ghost" aria-label={label} onClick={onClick}>
+      <Pencil />
+    </Button>
+  )
+  const iptuNext = h.iptu.installment ? nextOf(h.iptu.installment.id) : null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <House className="size-5" />
+          Sua moradia
+        </CardTitle>
+        <CardDescription>Preencha só o que você paga. Casa própria quitada não precisa de aluguel nem financiamento.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y">
+          <HousingRow
+            icon={KeyRound}
+            title="Aluguel"
+            value={h.rent ? formatMoney(h.rent.amount) : undefined}
+            detail={h.rent ? `todo dia ${h.rent.dueDay}` : 'Não cadastrado'}
+            action={h.rent ? editButton('Editar aluguel', () => setEditing(h.rent)) : add('rent')}
+          />
+          <HousingRow
+            icon={Landmark}
+            title="Financiamento"
+            value={h.financing ? formatMoney(h.financing.monthly) : undefined}
+            detail={
+              h.financing
+                ? `faltam ${h.financing.remaining} parcelas${h.financing.nextDue ? ` · próxima ${formatDateShort(h.financing.nextDue)}` : ''}`
+                : 'Não cadastrado'
+            }
+            action={
+              h.financing
+                ? editButton('Editar próxima parcela do financiamento', () => {
+                    const next = nextOf(h.financing!.installment.id)
+                    if (next) edit(next.id)
+                  })
+                : add('financing')
+            }
+          />
+          <HousingRow
+            icon={Receipt}
+            title="IPTU"
+            value={
+              h.iptu.recurring ? `${formatMoney(h.iptu.recurring.amount)}/ano` : h.iptu.installment ? `${formatMoney(h.iptu.installment.totalAmount)}/ano` : undefined
+            }
+            detail={
+              h.iptu.recurring
+                ? `à vista, todo ano em ${String(h.iptu.recurring.dueDay).padStart(2, '0')}/${String(h.iptu.recurring.frequency === 'anual' ? h.iptu.recurring.dueMonth : 1).padStart(2, '0')}`
+                : h.iptu.installment
+                  ? `${h.iptu.installment.totalInstallments} cotas${iptuNext ? ` · próxima ${formatDateShort(iptuNext.dueDate)}` : ''}`
+                  : 'Não cadastrado'
+            }
+            action={
+              h.iptu.recurring
+                ? editButton('Editar IPTU', () => setEditing(h.iptu.recurring))
+                : h.iptu.installment
+                  ? editButton('Editar próxima cota do IPTU', () => iptuNext && edit(iptuNext.id))
+                  : add('iptu')
+            }
+          />
+        </ul>
+        {h.financing && (
+          <p className="pt-2 text-xs text-muted-foreground">
+            O lápis do financiamento abre a próxima parcela. Para mudar todas, edite e escolha “Este e próximos meses”.
+          </p>
+        )}
+      </CardContent>
+      <RecurringDialog rc={editing} onClose={() => setEditing(null)} />
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Compras da casa
+// ---------------------------------------------------------------------------
+
+function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
+  const { transactions, subcategories } = useFinanceStore(useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories })))
+  const month = useUIStore((s) => s.selectedMonth)
+  const edit = useUIStore((s) => s.setEditingTransaction)
+  const [showAll, setShowAll] = useState(false)
+  const p = purchaseSummary(transactions, month)
+  const subName = (id: string | null) => subcategories.find((x) => x.id === id)?.name ?? 'Casa'
+  const list = showAll ? p.items : p.items.slice(0, 6)
+  const max = p.bySubcategory[0]?.total ?? 0
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-2">
+        <div className="flex flex-col gap-1.5">
+          <CardTitle className="flex items-center gap-2">
+            <ShoppingBasket className="size-5" />
+            Compras da casa
+          </CardTitle>
+          <CardDescription>Limpeza, utensílios, eletrodomésticos, móveis e reparos. Só o que é da casa, não pessoal.</CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => open({ kind: 'purchase' })}>
+          <Plus />
+          Compra
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {(
+            [
+              ['Neste mês', p.thisMonth],
+              ['Média por mês', p.monthlyAverage],
+              ['Últimos 12 meses', p.year],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label} className="flex flex-col gap-0.5 rounded-xl bg-muted px-2 py-2.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <span className="text-sm font-semibold tabular-nums">{formatMoney(value)}</span>
+            </div>
+          ))}
+        </div>
+
+        {p.bySubcategory.length > 0 && (
+          <ul className="flex flex-col gap-3" aria-label="Compras por tipo nos últimos 12 meses">
+            {p.bySubcategory.map((s) => (
+              <li key={s.subcategoryId} className="flex flex-col gap-1.5">
+                <div className="flex justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate">{subName(s.subcategoryId)}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatMoney(s.total)} <span className="text-muted-foreground">· {formatMoney(Math.round(s.total / 12))}/mês</span>
+                  </span>
+                </div>
+                <Progress value={max ? s.total / max : 0} color="var(--info)" label={`${subName(s.subcategoryId)}: ${formatMoney(s.total)} em 12 meses`} />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {p.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhuma compra para a casa ainda.</p>
+        ) : (
+          <ul className="divide-y">
+            {list.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => edit(t.id)}
+                  aria-label={`Editar compra ${t.description}`}
+                  className="flex w-full items-center gap-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 text-sm font-medium">
+                      {t.recurringCostId && <Repeat className="size-3.5 shrink-0 text-muted-foreground" aria-label="Repete" />}
+                      <span className="truncate">{t.description}</span>
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {formatDateShort(t.dueDate)} · {subName(t.subcategoryId)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">{formatMoney(t.amount)}</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {p.items.length > 6 && (
+          <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Mostrar menos' : `Ver todas (${p.items.length})`}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function HomePage() {
   const transactions = useFinanceStore((s) => s.transactions)
   const month = useUIStore((s) => s.selectedMonth)
@@ -310,9 +540,11 @@ export function HomePage() {
           <Stat label="Já pago" value={formatMoney(data.paid)} tone={data.paid > 0 ? 'income' : undefined} />
           <Stat label="Falta pagar" value={formatMoney(data.open)} hint={data.overdue > 0 ? `${formatMoney(data.overdue)} atrasado` : undefined} />
         </div>
+        <HousingCard open={setDialog} />
         <BillsCard open={setDialog} />
         <CompareCard />
         <FixedCard />
+        <PurchasesCard open={setDialog} />
         <MaintenanceCard open={setDialog} />
       </main>
       <HomeDialogs state={dialog} onClose={() => setDialog(null)} />
