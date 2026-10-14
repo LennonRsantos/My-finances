@@ -16,9 +16,12 @@ import { initialFinanceData, useFinanceStore } from '@/store/finance-store'
 import { initialRecovery, recoveryData, useRecoveryStore } from '@/store/recovery-store'
 import { defaultSettings, useSettingsStore } from '@/store/settings-store'
 
-/** Liga os dados do usuário logado ao Firestore. Retorna função de desligar. */
-async function startSync(uid: string): Promise<Unsubscribe> {
-  const finance = useFinanceStore.getState()
+/**
+ * Preparação da conta (primeiro login, categorias novas). Roda em paralelo
+ * com as escutas: antes, o app esperava essas leituras no servidor para só
+ * então mostrar os dados.
+ */
+async function prepareAccount(uid: string, finance: ReturnType<typeof useFinanceStore.getState>) {
   // Primeiro login neste projeto: leva para a nuvem o que já estava no navegador.
   await seedUserIfNew(uid, {
     settings: toCloudSettings(useSettingsStore.getState().settings),
@@ -32,13 +35,23 @@ async function startSync(uid: string): Promise<Unsubscribe> {
     maintenance: finance.maintenance,
   })
   await ensureDefaultCategories(uid)
+}
+
+/** Liga os dados do usuário logado ao Firestore. Retorna função de desligar. */
+function startSync(uid: string): Unsubscribe {
+  // Foto do que estava no navegador antes das escutas trocarem o estado.
+  prepareAccount(uid, useFinanceStore.getState()).catch(reportSyncError)
 
   const setAuth = useAuthStore.getState().set
   const unsubs = [
     subscribeCollection(uid, 'transactions', (transactions) => {
       useFinanceStore.setState({ transactions })
       setAuth({ dataLoaded: true })
-    }, reportSyncError),
+    }, (e) => {
+      // Sem permissão ou sem rede: mostra o erro em vez de carregar para sempre.
+      reportSyncError(e)
+      setAuth({ dataLoaded: true })
+    }),
     subscribeCollection(uid, 'installments', (installments) => useFinanceStore.setState({ installments }), reportSyncError),
     subscribeCollection(
       uid,
@@ -79,7 +92,7 @@ export function useCloudSync() {
     let stopSync: Unsubscribe | null = null
     let cancelled = false
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       stopSync?.()
       stopSync = null
 
@@ -99,14 +112,9 @@ export function useCloudSync() {
         recurringLoaded: false,
         syncError: null,
       })
-      try {
-        const stop = await startSync(user.uid)
-        if (cancelled || auth.currentUser?.uid !== user.uid) stop()
-        else stopSync = stop
-      } catch (e) {
-        reportSyncError(e)
-        setAuth({ dataLoaded: true })
-      }
+      const stop = startSync(user.uid)
+      if (cancelled || auth.currentUser?.uid !== user.uid) stop()
+      else stopSync = stop
     })
 
     return () => {

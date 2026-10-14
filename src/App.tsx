@@ -1,36 +1,69 @@
-import type { ComponentType } from 'react'
+import { lazy, Suspense, useEffect, type ComponentType } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
 import { AuthGate, LocalModeBanner, SyncErrorBanner } from '@/components/layout/auth-gate'
 import { EditTransactionDialog } from '@/components/transactions/edit-transaction-dialog'
 import { TransactionDialog } from '@/components/transactions/transaction-dialog'
+import { Skeleton } from '@/components/ui/misc'
 import { useCloudSync } from '@/hooks/use-cloud-sync'
 import { useRecurringMaterializer } from '@/hooks/use-recurring'
 import { useThemeSync } from '@/hooks/use-theme'
-import { CalendarPage } from '@/pages/calendar-page'
-import { DashboardPage } from '@/pages/dashboard-page'
-import { HomePage } from '@/pages/home-page'
-import { RecoveryPage } from '@/pages/recovery-page'
-import { ReportsPage } from '@/pages/reports-page'
-import { SettingsPage } from '@/pages/settings-page'
-import { TransactionsPage } from '@/pages/transactions-page'
-import { VehiclePage } from '@/pages/vehicle-page'
 import { useUIStore, type View } from '@/store/ui-store'
 
+/**
+ * Cada tela é um arquivo separado: o celular baixa só a que vai abrir.
+ * Depois da primeira tela, as outras são baixadas em segundo plano para a
+ * navegação continuar instantânea.
+ */
+const loaders: Record<View, () => Promise<{ default: ComponentType }>> = {
+  dashboard: () => import('@/pages/dashboard-page').then((m) => ({ default: m.DashboardPage })),
+  lancamentos: () => import('@/pages/transactions-page').then((m) => ({ default: m.TransactionsPage })),
+  calendario: () => import('@/pages/calendar-page').then((m) => ({ default: m.CalendarPage })),
+  casa: () => import('@/pages/home-page').then((m) => ({ default: m.HomePage })),
+  veiculo: () => import('@/pages/vehicle-page').then((m) => ({ default: m.VehiclePage })),
+  inteligencia: () => import('@/pages/recovery-page').then((m) => ({ default: m.RecoveryPage })),
+  relatorios: () => import('@/pages/reports-page').then((m) => ({ default: m.ReportsPage })),
+  configuracoes: () => import('@/pages/settings-page').then((m) => ({ default: m.SettingsPage })),
+}
+
 const PAGES: Record<View, ComponentType> = {
-  dashboard: DashboardPage,
-  lancamentos: TransactionsPage,
-  calendario: CalendarPage,
-  casa: HomePage,
-  veiculo: VehiclePage,
-  inteligencia: RecoveryPage,
-  relatorios: ReportsPage,
-  configuracoes: SettingsPage,
+  dashboard: lazy(loaders.dashboard),
+  lancamentos: lazy(loaders.lancamentos),
+  calendario: lazy(loaders.calendario),
+  casa: lazy(loaders.casa),
+  veiculo: lazy(loaders.veiculo),
+  inteligencia: lazy(loaders.inteligencia),
+  relatorios: lazy(loaders.relatorios),
+  configuracoes: lazy(loaders.configuracoes),
+}
+
+function PageFallback() {
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 sm:p-6" aria-busy aria-label="Carregando">
+      <Skeleton className="h-10 w-48" />
+      <Skeleton className="h-28" />
+      <Skeleton className="h-64" />
+    </div>
+  )
+}
+
+/** Baixa as outras telas quando o navegador estiver ocioso. */
+function usePrefetchPages() {
+  useEffect(() => {
+    const prefetch = () => Object.values(loaders).forEach((load) => void load())
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(prefetch, { timeout: 4000 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const id = setTimeout(prefetch, 2000)
+    return () => clearTimeout(id)
+  }, [])
 }
 
 export default function App() {
   useThemeSync()
   useCloudSync()
   useRecurringMaterializer()
+  usePrefetchPages()
   const view = useUIStore((s) => s.view)
   const Page = PAGES[view]
 
@@ -39,7 +72,9 @@ export default function App() {
       <AppShell>
         <LocalModeBanner />
         <SyncErrorBanner />
-        <Page />
+        <Suspense fallback={<PageFallback />}>
+          <Page />
+        </Suspense>
         <TransactionDialog />
         <EditTransactionDialog />
       </AppShell>
