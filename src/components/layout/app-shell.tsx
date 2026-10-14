@@ -15,6 +15,7 @@ import {
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { SidebarAccount } from './user-menu'
 import { useSettingsStore } from '@/store/settings-store'
 import { useUIStore, type View } from '@/store/ui-store'
 import type { ThemePreference } from '@/types/finance'
@@ -77,9 +78,12 @@ function Sidebar() {
           </button>
         ))}
       </nav>
-      <div className="mt-auto flex items-center justify-between px-2 text-sm text-muted-foreground">
-        Tema
-        <ThemeToggle />
+      <div className="mt-auto flex flex-col gap-3">
+        <div className="flex items-center justify-between px-2 text-sm text-muted-foreground">
+          Tema
+          <ThemeToggle />
+        </div>
+        <SidebarAccount />
       </div>
     </aside>
   )

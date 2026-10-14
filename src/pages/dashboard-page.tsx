@@ -1,4 +1,4 @@
-import { CalendarX2, Plus, Settings, Wallet } from 'lucide-react'
+import { CalendarX2, Plus, Wallet } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { BudgetProgress } from '@/components/dashboard/budget-progress'
 import { CategoryDonut } from '@/components/dashboard/category-donut'
@@ -8,6 +8,7 @@ import { MonthlyComparison } from '@/components/dashboard/monthly-comparison'
 import { PayeesCard } from '@/components/dashboard/payees-card'
 import { HealthBanner, SummaryCards } from '@/components/dashboard/summary-cards'
 import { ThemeToggle } from '@/components/layout/app-shell'
+import { MobileAccountButton } from '@/components/layout/user-menu'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { EmptyState, Skeleton } from '@/components/ui/misc'
@@ -32,15 +33,12 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
   )
 }
 
-/** Tema e configurações ficam no header no mobile (fora da barra inferior). */
+/** Tema e conta (configurações, sair) ficam no header no mobile, fora da barra inferior. */
 function MobileHeaderActions() {
-  const setView = useUIStore((s) => s.setView)
   return (
     <div className="flex lg:hidden">
       <ThemeToggle />
-      <Button variant="ghost" size="icon" onClick={() => setView('configuracoes')} aria-label="Configurações">
-        <Settings />
-      </Button>
+      <MobileAccountButton />
     </div>
   )
 }
