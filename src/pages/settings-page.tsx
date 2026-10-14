@@ -14,12 +14,13 @@ import {
   Sun,
   Tags,
   Trash2,
+  Upload,
   User,
   UserX,
   Wallet,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountDialog, type AccountDialogKind } from '@/components/settings/account-dialogs'
 import { CategoryManager } from '@/components/settings/category-manager'
@@ -27,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
+import { backupCount, parseBackup, type ParsedBackup } from '@/lib/backup'
 import { hasGoogle, hasPassword, signOut } from '@/lib/auth'
 import { todayISO } from '@/lib/dates'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
@@ -313,6 +315,117 @@ function downloadBackup() {
   URL.revokeObjectURL(url)
 }
 
+function ImportBackupRow() {
+  const cloud = useAuthStore((s) => s.status === 'signed_in')
+  const email = useAuthStore((s) => s.user?.email)
+  const importData = useFinanceStore((s) => s.importData)
+  const update = useSettingsStore((s) => s.update)
+  const input = useRef<HTMLInputElement>(null)
+  const [parsed, setParsed] = useState<ParsedBackup | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [withSettings, setWithSettings] = useState(false)
+  const [done, setDone] = useState(false)
+
+  const close = () => {
+    setParsed(null)
+    setError(null)
+    setDone(false)
+    setWithSettings(false)
+  }
+
+  const read = async (file: File) => {
+    try {
+      setParsed(parseBackup(await file.text()))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  const d = parsed?.data
+  const summary = d
+    ? (
+        [
+          ['lançamentos', d.transactions.length],
+          ['parcelamentos', d.installments.length],
+          ['fixos', d.recurringCosts.length],
+          ['dívidas', d.debts.length],
+          ['categorias', d.categories.length],
+          ['subcategorias', d.subcategories.length],
+        ] as const
+      ).filter(([, n]) => n > 0)
+    : []
+
+  return (
+    <>
+      <Row icon={Upload} label="Importar backup" value="Traz um arquivo .json para esta conta, sem apagar nada." onClick={() => input.current?.click()} />
+      <input
+        ref={input}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (file) void read(file)
+        }}
+      />
+      <Dialog open={!!parsed || !!error} onOpenChange={(o) => !o && close()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{error ? 'Não deu para importar' : done ? 'Backup importado' : 'Importar backup?'}</DialogTitle>
+            <DialogDescription>
+              {error
+                ? error
+                : done
+                  ? cloud
+                    ? 'Os dados já estão na sua conta e aparecem em todos os aparelhos.'
+                    : 'Os dados foram salvos neste navegador.'
+                  : `Vai para ${cloud ? (email ?? 'sua conta') : 'este navegador'}. Itens com o mesmo id são atualizados; nada é apagado.`}
+            </DialogDescription>
+          </DialogHeader>
+          {parsed && !done && (
+            <div className="flex flex-col gap-4 px-5 pb-2">
+              <ul className="grid grid-cols-2 gap-2 text-sm">
+                {summary.map(([label, n]) => (
+                  <li key={label} className="rounded-xl bg-muted px-3 py-2">
+                    <span className="font-semibold tabular-nums">{n}</span> {label}
+                  </li>
+                ))}
+              </ul>
+              {parsed.settings && (
+                <label className="flex items-center gap-3 text-sm">
+                  <input type="checkbox" checked={withSettings} onChange={(e) => setWithSettings(e.target.checked)} className="size-4 accent-primary" />
+                  Restaurar também saldo inicial e avisos
+                </label>
+              )}
+            </div>
+          )}
+          <div className="flex gap-2 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <DialogClose asChild>
+              <Button variant="outline" className="flex-1">
+                {parsed && !done ? 'Cancelar' : 'Fechar'}
+              </Button>
+            </DialogClose>
+            {parsed && !done && (
+              <Button
+                className="flex-1"
+                disabled={backupCount(parsed.data) === 0}
+                onClick={() => {
+                  importData(parsed.data)
+                  if (withSettings && parsed.settings) update(parsed.settings)
+                  setDone(true)
+                }}
+              >
+                Importar
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
 function DataSection() {
   const cloud = useAuthStore((s) => s.status === 'signed_in')
   const counts = useFinanceStore(
@@ -357,6 +470,7 @@ function DataSection() {
           value="Arquivo .json com lançamentos, categorias, fixos e dívidas."
           onClick={downloadBackup}
         />
+        <ImportBackupRow />
         {counts.transactions === 0 && (
           <Row icon={Wallet} label="Carregar dados de exemplo" value="Para explorar o app antes de lançar os seus." onClick={loadExample} />
         )}

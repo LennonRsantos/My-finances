@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Category, Debt, Installment, RecurringCost, Subcategory, Transaction } from '@/types/finance'
+import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
 import { generateInstallments, type InstallmentPurchaseInput } from '@/lib/finance'
@@ -59,6 +60,8 @@ interface FinanceState extends FinanceData {
   /** Apaga lançamentos, parcelamentos e fixos; mantém categorias. */
   clearTransactions: () => void
   loadExampleData: () => void
+  /** Importa backup: cria ou substitui por id; não apaga o que já existe. */
+  importData: (data: BackupData) => void
   /** Cria ou atualiza categoria. */
   saveCategory: (c: Category) => void
   /**
@@ -256,6 +259,18 @@ export const useFinanceStore = create<FinanceState>()(
         },
 
         loadExampleData: () => commit({ upserts: txWrites(buildMockTransactions()) }),
+
+        importData: (data) =>
+          commit({
+            upserts: [
+              ...data.categories.map((d) => ({ name: 'categories' as const, data: d })),
+              ...data.subcategories.map((d) => ({ name: 'subcategories' as const, data: d })),
+              ...data.installments.map((d) => ({ name: 'installments' as const, data: d })),
+              ...data.recurringCosts.map((d) => ({ name: 'recurringCosts' as const, data: d })),
+              ...data.debts.map((d) => ({ name: 'debts' as const, data: d })),
+              ...txWrites(data.transactions),
+            ],
+          }),
 
         saveCategory: (data) => commit({ upserts: [{ name: 'categories', data }] }),
 
