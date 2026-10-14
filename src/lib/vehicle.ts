@@ -3,7 +3,7 @@
  * abastecimentos trazem `fuel` (litros) e `odometer` (km).
  */
 import { differenceInCalendarDays } from 'date-fns'
-import type { Cents, FuelType, ISODate, MaintenanceReminder, Transaction, Vehicle, YearMonth } from '@/types/finance'
+import type { Cents, FuelType, ISODate, MaintenanceReminder, RecurringCost, Transaction, Vehicle, YearMonth } from '@/types/finance'
 import { addMonthsISO, lastNMonths, monthOf, parseDate } from './dates'
 
 export const VEHICLE_CATEGORY_ID = 'cat-veiculo'
@@ -187,23 +187,138 @@ export function reminderStatus(r: MaintenanceReminder, currentKm: number, today:
   return { level, kmLeft, daysLeft, dueDate, progress: Math.max(kmProgress, dayProgress, 0) }
 }
 
+// ---------------------------------------------------------------------------
+// Reserva mensal
+// ---------------------------------------------------------------------------
+
+/** Depreciação típica de carro usado no Brasil; o usuário ajusta no cadastro. */
+export const DEFAULT_DEPRECIATION_RATE = 10
+/** Sem histórico de km, usa uma média comum de uso urbano. */
+export const DEFAULT_KM_PER_MONTH = 1000
+const DAYS_PER_MONTH = 30.44
+
+/**
+ * Km rodados por mês, pelos registros de hodômetro (inclui o km do
+ * cadastro). Precisa de pelo menos 30 dias de histórico; senão `null`.
+ */
+export function kmPerMonth(vehicle: Vehicle, transactions: Transaction[]): number | null {
+  const readings = transactions
+    .filter((t) => t.vehicleId === vehicle.id && t.odometer != null)
+    .map((t) => ({ date: t.dueDate, km: t.odometer! }))
+  if (!readings.length) return null
+  readings.push({ date: vehicle.createdAt.slice(0, 10) as ISODate, km: vehicle.initialOdometer })
+  readings.sort((a, b) => a.date.localeCompare(b.date))
+  const first = readings[0]!
+  const last = readings.at(-1)!
+  const days = differenceInCalendarDays(parseDate(last.date), parseDate(first.date))
+  const km = last.km - first.km
+  return days >= 30 && km > 0 ? (km / days) * DAYS_PER_MONTH : null
+}
+
+export interface ReserveItem {
+  label: string
+  /** Quanto guardar por mês, em centavos */
+  monthly: Cents
+  detail: string
+}
+
+export interface VehicleReserve {
+  maintenance: ReserveItem[]
+  /** Lembretes sem custo estimado (ficam fora da conta) */
+  missingCost: MaintenanceReminder[]
+  annual: ReserveItem[]
+  depreciation: ReserveItem | null
+  total: Cents
+  kmPerMonth: number
+  kmMeasured: boolean
+  /** Média mensal gasta com manutenção e pneus nos últimos 12 meses */
+  historicMaintenance: Cents
+}
+
+const MAINTENANCE_SUBS = new Set(['sub-veiculo-manutencao', 'sub-veiculo-pneus'])
+
+/**
+ * Quanto separar por mês para não ser pego de surpresa: manutenções
+ * previstas (custo ÷ intervalo), gastos anuais ÷ 12 e depreciação.
+ */
+export function vehicleReserve(
+  vehicle: Vehicle,
+  transactions: Transaction[],
+  reminders: MaintenanceReminder[],
+  recurring: RecurringCost[],
+  endMonth: YearMonth,
+): VehicleReserve {
+  const measured = kmPerMonth(vehicle, transactions)
+  const kmMonth = measured ?? DEFAULT_KM_PER_MONTH
+
+  const own = reminders.filter((r) => r.vehicleId === vehicle.id)
+  const maintenance: ReserveItem[] = []
+  for (const r of own) {
+    if (!r.estimatedCost) continue
+    // Vale o que vencer primeiro: o tempo ou os km rodados.
+    const byKm = r.intervalKm ? r.intervalKm / kmMonth : Infinity
+    const byTime = r.intervalMonths ?? Infinity
+    const months = Math.min(byKm, byTime)
+    if (!Number.isFinite(months) || months <= 0) continue
+    const every = Math.round(months)
+    maintenance.push({
+      label: r.name,
+      monthly: Math.round(r.estimatedCost / months),
+      detail: `${every <= 1 ? 'todo mês' : `a cada ~${every} meses`}${byKm < byTime ? ' (pelos km)' : ''}`,
+    })
+  }
+
+  const annual = recurring
+    .filter((rc) => rc.vehicleId === vehicle.id && rc.active && rc.frequency === 'anual')
+    .map((rc) => ({ label: rc.description, monthly: Math.round(rc.amount / 12), detail: 'valor do ano ÷ 12' }))
+
+  const rate = vehicle.depreciationRate ?? DEFAULT_DEPRECIATION_RATE
+  const depreciation = vehicle.marketValue
+    ? {
+        label: 'Depreciação',
+        monthly: Math.round((vehicle.marketValue * rate) / 100 / 12),
+        detail: `${rate.toLocaleString('pt-BR')}% ao ano sobre o valor atual`,
+      }
+    : null
+
+  const window = new Set(lastNMonths(endMonth, 12))
+  const historic = transactions
+    .filter((t) => t.vehicleId === vehicle.id && t.subcategoryId && MAINTENANCE_SUBS.has(t.subcategoryId) && window.has(monthOf(t.dueDate)))
+    .reduce((a, t) => a + t.amount, 0)
+
+  const sum = (items: ReserveItem[]) => items.reduce((a, i) => a + i.monthly, 0)
+  return {
+    maintenance: maintenance.sort((a, b) => b.monthly - a.monthly),
+    missingCost: own.filter((r) => !r.estimatedCost),
+    annual,
+    depreciation,
+    total: sum(maintenance) + sum(annual) + (depreciation?.monthly ?? 0),
+    kmPerMonth: kmMonth,
+    kmMeasured: measured !== null,
+    historicMaintenance: Math.round(historic / 12),
+  }
+}
+
 /** Intervalos comuns de manual; o usuário ajusta ao cadastrar. */
-export const DEFAULT_REMINDERS: { name: string; intervalKm: number | null; intervalMonths: number | null }[] = [
-  { name: 'Troca de óleo e filtro', intervalKm: 10000, intervalMonths: 12 },
-  { name: 'Revisão', intervalKm: 10000, intervalMonths: 12 },
-  { name: 'Rodízio e alinhamento', intervalKm: 10000, intervalMonths: null },
-  { name: 'Filtro de ar', intervalKm: 15000, intervalMonths: null },
-  { name: 'Correia dentada', intervalKm: 50000, intervalMonths: 48 },
-  { name: 'Fluido de freio', intervalKm: null, intervalMonths: 24 },
+/** `cost` em reais: média de oficina independente, só como ponto de partida. */
+export const DEFAULT_REMINDERS: { name: string; intervalKm: number | null; intervalMonths: number | null; cost: number }[] = [
+  { name: 'Troca de óleo e filtro', intervalKm: 10000, intervalMonths: 12, cost: 300 },
+  { name: 'Revisão', intervalKm: 10000, intervalMonths: 12, cost: 800 },
+  { name: 'Rodízio e alinhamento', intervalKm: 10000, intervalMonths: null, cost: 150 },
+  { name: 'Troca de pneus', intervalKm: 50000, intervalMonths: 60, cost: 2000 },
+  { name: 'Filtro de ar', intervalKm: 15000, intervalMonths: null, cost: 80 },
+  { name: 'Correia dentada', intervalKm: 50000, intervalMonths: 48, cost: 900 },
+  { name: 'Fluido de freio', intervalKm: null, intervalMonths: 24, cost: 150 },
 ]
 
 export type DocumentPreset = 'ipva' | 'licenciamento' | 'seguro'
 
 /** Gastos anuais do veículo, cadastrados como fixo anual. */
-export const DOCUMENT_PRESETS: Record<DocumentPreset, { label: string; subcategoryId: string; hint: string }> = {
+export const DOCUMENT_PRESETS: Record<DocumentPreset, { label: string; subcategoryId: string; hint: string; monthly?: boolean }> = {
   ipva: { label: 'IPVA', subcategoryId: 'sub-veiculo-ipva', hint: 'Valor total do ano (à vista ou soma das cotas).' },
   licenciamento: { label: 'Licenciamento', subcategoryId: 'sub-veiculo-ipva', hint: 'Taxa anual do Detran.' },
-  seguro: { label: 'Seguro', subcategoryId: 'sub-veiculo-seguro', hint: 'Valor anual da apólice. Se paga parcelado, use Lançamentos > Parcelado.' },
+  /** Seguro pode ser pago por mês (mensalidade) ou de uma vez no ano. */
+  seguro: { label: 'Seguro', subcategoryId: 'sub-veiculo-seguro', hint: 'Mensalidade ou valor anual da apólice.', monthly: true },
 }
 
 export const formatKm = (km: number) => `${Math.round(km).toLocaleString('pt-BR')} km`

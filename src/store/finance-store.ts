@@ -5,7 +5,7 @@ import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
 import { generateInstallments, type InstallmentPurchaseInput } from '@/lib/finance'
-import { addDaysISO, todayISO } from '@/lib/dates'
+import { addDaysISO, monthOf, shiftMonth, todayISO } from '@/lib/dates'
 import { pendingOccurrences } from '@/lib/recurring'
 import { currentUid, reportSyncError } from './auth-store'
 import { localOnlyStorage } from './local-storage'
@@ -50,6 +50,13 @@ interface FinanceState extends FinanceData {
   materializeRecurring: () => void
   /** Encerra o fixo e apaga ocorrências futuras ainda pendentes. */
   endRecurringCost: (id: RecurringCost['id']) => void
+  /**
+   * Edita um fixo. Os meses ainda não pagos (do atual em diante) são
+   * refeitos com os novos dados; meses pagos e passados ficam como estão.
+   */
+  updateRecurringCost: (rc: RecurringCost) => void
+  /** Grava um lançamento inteiro (edição de abastecimento e gasto do veículo). */
+  saveTransaction: (t: Transaction) => void
   togglePaid: (id: Transaction['id']) => void
   removeTransaction: (id: Transaction['id']) => void
   /**
@@ -199,6 +206,27 @@ export const useFinanceStore = create<FinanceState>()(
             deletes: futurePending.map((t) => ({ name: 'transactions', id: t.id })),
           })
         },
+
+        updateRecurringCost: (rc) => {
+          const { transactions } = get()
+          const month = monthOf(todayISO())
+          const occurrences = transactions.filter((t) => t.recurringCostId === rc.id)
+          const paidMonths = new Set(occurrences.filter((t) => t.status === 'pago').map((t) => monthOf(t.dueDate)))
+          // Gera de novo a partir do mês atual, sem tocar nos meses já pagos.
+          const { transactions: fresh, lastGeneratedMonth } = pendingOccurrences({ ...rc, lastGeneratedMonth: shiftMonth(month, -1) })
+          const regenerated = fresh.filter((t) => !paidMonths.has(monthOf(t.dueDate)))
+          const keep = new Set(regenerated.map((t) => t.id))
+          const stale = occurrences.filter((t) => t.status !== 'pago' && monthOf(t.dueDate) >= month && !keep.has(t.id))
+          commit({
+            upserts: [
+              { name: 'recurringCosts', data: { ...rc, lastGeneratedMonth: lastGeneratedMonth ?? rc.lastGeneratedMonth } },
+              ...txWrites(regenerated),
+            ],
+            deletes: stale.map((t) => ({ name: 'transactions' as const, id: t.id })),
+          })
+        },
+
+        saveTransaction: (t) => commit({ upserts: txWrites([t]) }),
 
         togglePaid: (id) => {
           const t = get().transactions.find((x) => x.id === id)

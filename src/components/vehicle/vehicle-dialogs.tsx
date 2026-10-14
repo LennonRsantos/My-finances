@@ -10,11 +10,12 @@ import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
 import { todayISO } from '@/lib/dates'
-import { formatMoney, toCents } from '@/lib/money'
+import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { cents, date, km, nowISO, optionalMoney, requiredKm, money, toKm } from '@/lib/form-fields'
 import { parseMoneyInput } from '@/lib/schemas'
 import { createId } from '@/lib/utils'
 import {
+  DEFAULT_DEPRECIATION_RATE,
   DEFAULT_REMINDERS,
   DOCUMENT_PRESETS,
   FUEL_SUBCATEGORY_ID,
@@ -39,8 +40,8 @@ import {
 
 export type VehicleDialogState =
   | { kind: 'vehicle'; vehicle?: Vehicle }
-  | { kind: 'fuel'; vehicle: Vehicle; currentKm: number }
-  | { kind: 'expense'; vehicle: Vehicle; currentKm: number }
+  | { kind: 'fuel'; vehicle: Vehicle; currentKm: number; transaction?: Transaction }
+  | { kind: 'expense'; vehicle: Vehicle; currentKm: number; transaction?: Transaction }
   | { kind: 'reminder'; vehicle: Vehicle; currentKm: number; reminder?: MaintenanceReminder }
   | { kind: 'complete'; vehicle: Vehicle; currentKm: number; reminder: MaintenanceReminder }
   | { kind: 'document'; vehicle: Vehicle; preset: DocumentPreset }
@@ -88,6 +89,8 @@ const vehicleSchema = z.object({
   plate: z.string().trim().max(10),
   year: z.string().trim().refine((v) => v === '' || (/^\d{4}$/.test(v) && Number(v) > 1900), 'Ano inválido'),
   odometer: requiredKm,
+  marketValue: optionalMoney,
+  depreciationRate: z.string().trim().refine((v) => v === '' || (parseMoneyInput(v) >= 0 && parseMoneyInput(v) <= 100), 'De 0 a 100'),
 })
 
 function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone: () => void }) {
@@ -103,6 +106,8 @@ function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone: () => voi
       plate: vehicle?.plate ?? '',
       year: vehicle?.year ? String(vehicle.year) : '',
       odometer: vehicle ? String(vehicle.initialOdometer) : '',
+      marketValue: vehicle?.marketValue ? moneyText(vehicle.marketValue) : '',
+      depreciationRate: String(vehicle?.depreciationRate ?? DEFAULT_DEPRECIATION_RATE).replace('.', ','),
     },
   })
   const [kind, fuel] = useWatch({ control, name: ['kind', 'fuel'] })
@@ -122,6 +127,8 @@ function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone: () => voi
           plate: v.plate ? v.plate.toUpperCase() : null,
           year: v.year ? Number(v.year) : null,
           initialOdometer: toKm(v.odometer) ?? 0,
+          marketValue: v.marketValue ? cents(v.marketValue) : null,
+          depreciationRate: v.depreciationRate ? parseMoneyInput(v.depreciationRate) : DEFAULT_DEPRECIATION_RATE,
           active: true,
           createdAt: vehicle?.createdAt ?? nowISO(),
         })
@@ -170,6 +177,21 @@ function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone: () => voi
         <Field id="v-plate" label="Placa (opcional)">
           <Input id="v-plate" autoComplete="off" spellCheck={false} className="uppercase" {...register('plate')} />
         </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="v-value" label="Valor hoje (FIPE)" error={e.marketValue?.message}>
+            <Affix before="R$">
+              <Input id="v-value" inputMode="decimal" className="pl-10" aria-invalid={!!e.marketValue} {...register('marketValue')} />
+            </Affix>
+          </Field>
+          <Field id="v-dep" label="Perde por ano" error={e.depreciationRate?.message}>
+            <Affix after="%">
+              <Input id="v-dep" inputMode="decimal" className="pr-8" aria-invalid={!!e.depreciationRate} {...register('depreciationRate')} />
+            </Affix>
+          </Field>
+        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          Opcional. Usado para calcular quanto guardar por mês para trocar de carro sem perder dinheiro. Carros usados perdem perto de 10% ao ano.
+        </p>
       </div>
       {confirmDelete && vehicle ? (
         <div className="flex flex-col gap-2 border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -223,12 +245,67 @@ const fuelSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS),
 })
 
-function FuelForm({ vehicle, currentKm, onDone }: { vehicle: Vehicle; currentKm: number; onDone: () => void }) {
+const moneyText = (c: number) => fromCents(c).toFixed(2).replace('.', ',')
+
+/** Edição: mantém id, criação e vínculos (parcela, fixo) do lançamento original. */
+const keepIdentity = (original: Transaction | undefined, next: Transaction): Transaction =>
+  original
+    ? { ...next, id: original.id, createdAt: original.createdAt, installment: original.installment, recurringCostId: original.recurringCostId, payTo: original.payTo ?? null, notes: original.notes }
+    : next
+
+/** Rodapé de edição: salvar, ou excluir com confirmação. */
+function EditActions({ submitLabel, transaction, onDone }: { submitLabel: string; transaction?: Transaction; onDone: () => void }) {
+  const remove = useFinanceStore((s) => s.removeTransaction)
+  const [confirm, setConfirm] = useState(false)
+  if (!transaction) return <FormActions submitLabel={submitLabel} />
+  if (confirm)
+    return (
+      <div className="flex gap-2 border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <Button type="button" variant="outline" className="flex-1" onClick={() => setConfirm(false)}>
+          Voltar
+        </Button>
+        <Button
+          type="button"
+          variant="expense"
+          className="flex-1"
+          onClick={() => {
+            remove(transaction.id)
+            onDone()
+          }}
+        >
+          Confirmar exclusão
+        </Button>
+      </div>
+    )
+  return (
+    <FormActions
+      submitLabel={submitLabel}
+      extra={
+        <Button type="button" variant="outline" size="icon" className="text-expense" aria-label="Excluir" onClick={() => setConfirm(true)}>
+          <Trash2 />
+        </Button>
+      }
+    />
+  )
+}
+
+function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicle; currentKm: number; transaction?: Transaction; onDone: () => void }) {
   const add = useFinanceStore((s) => s.addVehicleExpense)
+  const save = useFinanceStore((s) => s.saveTransaction)
   const defaultType: FuelType = vehicle.fuel === 'flex' ? 'gasolina' : vehicle.fuel
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(fuelSchema),
-    defaultValues: { date: todayISO(), total: '', liters: '', odometer: '', type: defaultType, fullTank: true, paymentMethod: 'pix' as PaymentMethod },
+    defaultValues: transaction
+      ? {
+          date: transaction.dueDate,
+          total: moneyText(transaction.amount),
+          liters: String(transaction.fuel?.liters ?? '').replace('.', ','),
+          odometer: transaction.odometer != null ? String(transaction.odometer) : '',
+          type: transaction.fuel?.type ?? defaultType,
+          fullTank: transaction.fuel?.fullTank ?? true,
+          paymentMethod: (transaction.paymentMethod ?? 'pix') as PaymentMethod,
+        }
+      : { date: todayISO(), total: '', liters: '', odometer: '', type: defaultType, fullTank: true, paymentMethod: 'pix' as PaymentMethod },
   })
   const [total, liters, type, fullTank, paymentMethod] = useWatch({ control, name: ['total', 'liters', 'type', 'fullTank', 'paymentMethod'] })
   const perLiter = parseMoneyInput(total) > 0 && parseMoneyInput(liters) > 0 ? toCents(parseMoneyInput(total) / parseMoneyInput(liters)) : null
@@ -240,7 +317,8 @@ function FuelForm({ vehicle, currentKm, onDone }: { vehicle: Vehicle; currentKm:
       className={formClass}
       onSubmit={handleSubmit((v) => {
         const l = parseMoneyInput(v.liters)
-        add(
+        const next = keepIdentity(
+          transaction,
           expense(vehicle, {
             description: `Abastecimento · ${FUEL_LABELS[v.type]}`,
             amount: cents(v.total),
@@ -252,6 +330,8 @@ function FuelForm({ vehicle, currentKm, onDone }: { vehicle: Vehicle; currentKm:
             fuel: { liters: Math.round(l * 100) / 100, type: v.type, fullTank: v.fullTank },
           }),
         )
+        if (transaction) save(next)
+        else add(next)
         onDone()
       })}
     >
@@ -303,7 +383,7 @@ function FuelForm({ vehicle, currentKm, onDone }: { vehicle: Vehicle; currentKm:
           <Input id="f-date" type="date" aria-invalid={!!e.date} {...register('date')} />
         </Field>
       </div>
-      <FormActions submitLabel="Salvar abastecimento" />
+      <EditActions submitLabel="Salvar abastecimento" transaction={transaction} onDone={onDone} />
     </form>
   )
 }
@@ -322,15 +402,26 @@ const expenseSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS),
 })
 
-function ExpenseForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void }) {
+function ExpenseForm({ vehicle, transaction, onDone }: { vehicle: Vehicle; transaction?: Transaction; onDone: () => void }) {
   const add = useFinanceStore((s) => s.addVehicleExpense)
+  const save = useFinanceStore((s) => s.saveTransaction)
   const subcategories = useFinanceStore((s) => s.subcategories)
   const options = subcategories
     .filter((sc) => sc.categoryId === VEHICLE_CATEGORY_ID && sc.id !== FUEL_SUBCATEGORY_ID)
     .map((sc) => ({ value: sc.id, label: sc.name }))
   const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(expenseSchema),
-    defaultValues: { subcategoryId: '', description: '', amount: '', date: todayISO(), odometer: '', paid: true, paymentMethod: 'pix' as PaymentMethod },
+    defaultValues: transaction
+      ? {
+          subcategoryId: transaction.subcategoryId ?? '',
+          description: transaction.description,
+          amount: moneyText(transaction.amount),
+          date: transaction.dueDate,
+          odometer: transaction.odometer != null ? String(transaction.odometer) : '',
+          paid: transaction.status === 'pago',
+          paymentMethod: (transaction.paymentMethod ?? 'pix') as PaymentMethod,
+        }
+      : { subcategoryId: '', description: '', amount: '', date: todayISO(), odometer: '', paid: true, paymentMethod: 'pix' as PaymentMethod },
   })
   const [subcategoryId, paid, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'paid', 'paymentMethod'] })
   const e = formState.errors
@@ -340,7 +431,8 @@ function ExpenseForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void
       noValidate
       className={formClass}
       onSubmit={handleSubmit((v) => {
-        add(
+        const next = keepIdentity(
+          transaction,
           expense(vehicle, {
             description: v.description,
             amount: cents(v.amount),
@@ -351,6 +443,8 @@ function ExpenseForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void
             paid: v.paid,
           }),
         )
+        if (transaction) save(next)
+        else add(next)
         onDone()
       })}
     >
@@ -398,7 +492,7 @@ function ExpenseForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
       </div>
-      <FormActions submitLabel="Salvar gasto" />
+      <EditActions submitLabel="Salvar gasto" transaction={transaction} onDone={onDone} />
     </form>
   )
 }
@@ -414,6 +508,7 @@ const reminderSchema = z
     intervalMonths: z.string().trim().refine((v) => v === '' || (/^\d+$/.test(v) && Number(v) > 0), 'Use meses inteiros'),
     lastKm: km,
     lastDate: date,
+    estimatedCost: optionalMoney,
   })
   .refine((v) => v.intervalKm !== '' || v.intervalMonths !== '', { path: ['intervalKm'], message: 'Informe km, meses ou os dois' })
 
@@ -438,6 +533,7 @@ function ReminderForm({
       intervalMonths: reminder?.intervalMonths ? String(reminder.intervalMonths) : '',
       lastKm: String(reminder?.lastKm ?? currentKm),
       lastDate: reminder?.lastDate ?? todayISO(),
+      estimatedCost: reminder?.estimatedCost ? moneyText(reminder.estimatedCost) : '',
     },
   })
   const e = formState.errors
@@ -456,6 +552,7 @@ function ReminderForm({
           intervalMonths: v.intervalMonths ? Number(v.intervalMonths) : null,
           lastKm: toKm(v.lastKm),
           lastDate: v.lastDate as ISODate,
+          estimatedCost: v.estimatedCost ? cents(v.estimatedCost) : null,
           createdAt: reminder?.createdAt ?? nowISO(),
         })
         onDone()
@@ -474,6 +571,7 @@ function ReminderForm({
                     setValue('name', p.name, { shouldValidate: true })
                     setValue('intervalKm', p.intervalKm ? String(p.intervalKm) : '')
                     setValue('intervalMonths', p.intervalMonths ? String(p.intervalMonths) : '')
+                    setValue('estimatedCost', moneyText(p.cost * 100))
                   }}
                   className="h-9 rounded-full border px-3 text-sm text-muted-foreground transition-colors hover:bg-muted"
                 >
@@ -509,6 +607,16 @@ function ReminderForm({
             <Input id="r-last-date" type="date" aria-invalid={!!e.lastDate} {...register('lastDate')} />
           </Field>
         </div>
+        <Field
+          id="r-cost"
+          label="Quanto custa (opcional)"
+          error={e.estimatedCost?.message}
+          hint="Entra no cálculo de quanto guardar por mês. As sugestões vêm com um valor médio; ajuste ao seu orçamento."
+        >
+          <Affix before="R$">
+            <Input id="r-cost" inputMode="decimal" className="pl-10" aria-invalid={!!e.estimatedCost} {...register('estimatedCost')} />
+          </Affix>
+        </Field>
       </div>
       <FormActions
         submitLabel={reminder ? 'Salvar' : 'Criar lembrete'}
@@ -600,16 +708,22 @@ function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehic
 // Documentos anuais
 // ---------------------------------------------------------------------------
 
-const documentSchema = z.object({ amount: money('Informe o valor'), date, paymentMethod: z.enum(PAYMENT_METHODS) })
+const documentSchema = z.object({
+  amount: money('Informe o valor'),
+  date,
+  frequency: z.enum(['mensal', 'anual']),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+})
 
 function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: DocumentPreset; onDone: () => void }) {
   const addRecurringCost = useFinanceStore((s) => s.addRecurringCost)
   const meta = DOCUMENT_PRESETS[preset]
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(documentSchema),
-    defaultValues: { amount: '', date: todayISO(), paymentMethod: 'pix' as PaymentMethod },
+    defaultValues: { amount: '', date: todayISO(), frequency: 'anual' as 'mensal' | 'anual', paymentMethod: 'pix' as PaymentMethod },
   })
-  const paymentMethod = useWatch({ control, name: 'paymentMethod' })
+  const [paymentMethod, frequency] = useWatch({ control, name: ['paymentMethod', 'frequency'] })
+  const monthly = frequency === 'mensal'
   const e = formState.errors
 
   return (
@@ -618,7 +732,7 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
       className={formClass}
       onSubmit={handleSubmit((v) => {
         const due = v.date as ISODate
-        const rc: RecurringCost = {
+        const base: Omit<RecurringCost, 'frequency' | 'dueMonth'> = {
           id: createId(),
           description: `${meta.label} · ${vehicle.name}`,
           amount: cents(v.amount),
@@ -636,16 +750,30 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
           payTo: null,
           vehicleId: vehicle.id,
           createdAt: nowISO(),
-          frequency: 'anual',
-          dueMonth: Number(due.slice(5, 7)),
         }
+        const rc: RecurringCost =
+          v.frequency === 'mensal' ? { ...base, frequency: 'mensal' } : { ...base, frequency: 'anual', dueMonth: Number(due.slice(5, 7)) }
         addRecurringCost(rc, false)
         onDone()
       })}
     >
       <div className={bodyClass}>
+        {meta.monthly && (
+          <div className="flex flex-col gap-2">
+            <Label>Como você paga</Label>
+            <Choices
+              label="Como você paga"
+              value={frequency}
+              onChange={(v) => setValue('frequency', v)}
+              options={[
+                { value: 'mensal', label: 'Por mês' },
+                { value: 'anual', label: 'Por ano' },
+              ]}
+            />
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
-          <Field id="d-amount" label="Valor no ano" error={e.amount?.message}>
+          <Field id="d-amount" label={monthly ? 'Valor por mês' : 'Valor no ano'} error={e.amount?.message}>
             <Affix before="R$">
               <Input id="d-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
             </Affix>
@@ -654,7 +782,9 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
             <Input id="d-date" type="date" aria-invalid={!!e.date} {...register('date')} />
           </Field>
         </div>
-        <p className="-mt-3 text-xs text-muted-foreground">{meta.hint} Repete todo ano e aparece no Calendário.</p>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {meta.hint} Repete {monthly ? 'todo mês' : 'todo ano'} e aparece no Calendário.
+        </p>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
@@ -672,9 +802,12 @@ function titleOf(d: Exclude<VehicleDialogState, null>): { title: string; descrip
     case 'vehicle':
       return { title: d.vehicle ? 'Editar veículo' : 'Novo veículo', description: 'Carro, moto ou outro veículo seu.' }
     case 'fuel':
-      return { title: 'Abastecimento', description: d.vehicle.name }
+      return { title: d.transaction ? 'Editar abastecimento' : 'Abastecimento', description: d.vehicle.name }
     case 'expense':
-      return { title: 'Gasto com o veículo', description: `${d.vehicle.name} · entra em Lançamentos na categoria Veículo.` }
+      return {
+        title: d.transaction ? 'Editar gasto' : 'Gasto com o veículo',
+        description: `${d.vehicle.name} · entra em Lançamentos na categoria Veículo.`,
+      }
     case 'reminder':
       return { title: d.reminder ? 'Editar lembrete' : 'Lembrete de manutenção', description: d.vehicle.name }
     case 'complete':
@@ -694,8 +827,12 @@ export function VehicleDialogs({ state, onClose }: { state: VehicleDialogState; 
           <DialogDescription>{meta?.description}</DialogDescription>
         </DialogHeader>
         {state?.kind === 'vehicle' && <VehicleForm vehicle={state.vehicle} onDone={onClose} />}
-        {state?.kind === 'fuel' && <FuelForm vehicle={state.vehicle} currentKm={state.currentKm} onDone={onClose} />}
-        {state?.kind === 'expense' && <ExpenseForm vehicle={state.vehicle} onDone={onClose} />}
+        {state?.kind === 'fuel' && (
+          <FuelForm key={state.transaction?.id ?? 'new'} vehicle={state.vehicle} currentKm={state.currentKm} transaction={state.transaction} onDone={onClose} />
+        )}
+        {state?.kind === 'expense' && (
+          <ExpenseForm key={state.transaction?.id ?? 'new'} vehicle={state.vehicle} transaction={state.transaction} onDone={onClose} />
+        )}
         {state?.kind === 'reminder' && (
           <ReminderForm vehicle={state.vehicle} currentKm={state.currentKm} reminder={state.reminder} onDone={onClose} />
         )}

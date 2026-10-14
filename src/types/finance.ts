@@ -228,6 +228,10 @@ export interface Vehicle {
   fuel: FuelType
   /** Km no hodômetro ao cadastrar */
   initialOdometer: number
+  /** Valor de mercado hoje (tabela FIPE), para calcular a depreciação */
+  marketValue?: Cents | null
+  /** Quanto o veículo perde de valor por ano, em % (10 = 10% a.a.) */
+  depreciationRate?: Percent | null
   active: boolean
   createdAt: string
 }
@@ -252,6 +256,8 @@ export interface MaintenanceReminder {
   intervalMonths: number | null
   lastKm: number | null
   lastDate: ISODate | null
+  /** Quanto costuma custar, para calcular a reserva mensal */
+  estimatedCost?: Cents | null
   createdAt: string
 }
 

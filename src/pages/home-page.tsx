@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MonthSelector } from '@/components/dashboard/month-selector'
 import { HomeDialogs, type HomeDialogState } from '@/components/home/home-dialogs'
+import { RecurringRows } from '@/components/recurring/recurring-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
@@ -80,7 +81,7 @@ function BillsCard({ open }: { open: (d: HomeDialogState) => void }) {
             <Receipt className="size-5" />
             Contas de {formatMonthLabel(month).toLowerCase()}
           </CardTitle>
-          <CardDescription>Toque numa conta para editar.</CardDescription>
+          <CardDescription>Toque numa conta para editar ou excluir.</CardDescription>
         </div>
         <Button size="sm" variant="outline" onClick={() => open({ kind: 'bill' })}>
           <Plus />
@@ -215,19 +216,10 @@ function FixedCard() {
           <Repeat className="size-5" />
           Contas fixas da casa
         </CardTitle>
-        <CardDescription>Somam {formatMoney(monthly)} por mês. Para encerrar uma, use Lançamentos &gt; Gastos fixos.</CardDescription>
+        <CardDescription>Somam {formatMoney(monthly)} por mês. Toque numa conta para editar ou excluir.</CardDescription>
       </CardHeader>
       <CardContent>
-        <ul className="divide-y">
-          {recurring.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-              <span className="min-w-0 truncate">{r.description}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">
-                {formatMoney(r.amount)} · {r.frequency === 'mensal' ? `todo dia ${r.dueDay}` : `anual, ${r.dueDay}/${String(r.dueMonth).padStart(2, '0')}`}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <RecurringRows items={recurring} />
       </CardContent>
     </Card>
   )
