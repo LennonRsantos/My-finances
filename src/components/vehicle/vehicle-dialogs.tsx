@@ -13,7 +13,7 @@ import { todayISO } from '@/lib/dates'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { cents, date, km, nowISO, optionalMoney, requiredKm, money, toKm } from '@/lib/form-fields'
 import { parseMoneyInput } from '@/lib/schemas'
-import { createId } from '@/lib/utils'
+import { cn, createId } from '@/lib/utils'
 import {
   DEFAULT_DEPRECIATION_RATE,
   DEFAULT_REMINDERS,
@@ -235,15 +235,37 @@ function VehicleForm({ vehicle, onDone }: { vehicle?: Vehicle; onDone: () => voi
 // Abastecimento
 // ---------------------------------------------------------------------------
 
-const fuelSchema = z.object({
-  date,
-  total: money('Informe quanto pagou'),
-  liters: z.string().trim().refine((v) => parseMoneyInput(v) > 0, 'Informe os litros'),
-  odometer: km,
-  type: z.enum(FUEL_TYPES),
-  fullTank: z.boolean(),
-  paymentMethod: z.enum(PAYMENT_METHODS),
-})
+const positive = (v: string) => parseMoneyInput(v) > 0
+const fuelSchema = z
+  .object({
+    date,
+    price: z.string().trim(),
+    total: z.string().trim(),
+    liters: z.string().trim(),
+    odometer: km,
+    type: z.enum(FUEL_TYPES),
+    fullTank: z.boolean(),
+    paymentMethod: z.enum(PAYMENT_METHODS),
+  })
+  // Basta saber dois dos três (preço do litro, litros, total); o terceiro é calculado.
+  .refine((v) => [v.price, v.liters, v.total].filter(positive).length >= 2, {
+    path: ['liters'],
+    message: 'Preencha dois destes: preço do litro, litros ou total pago',
+  })
+
+/** Completa o que faltar entre preço do litro, litros e total (em reais). */
+function solveFuel(priceText: string, litersText: string, totalText: string) {
+  const price = parseMoneyInput(priceText)
+  const liters = parseMoneyInput(litersText)
+  const total = parseMoneyInput(totalText)
+  const has = (n: number) => n > 0
+  if (has(liters) && has(total)) return { liters, total, price: total / liters }
+  if (has(price) && has(liters)) return { liters, total: price * liters, price }
+  if (has(price) && has(total)) return { liters: total / price, total, price }
+  return null
+}
+
+const decimalText = (n: number, digits: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: digits })
 
 const moneyText = (c: number) => fromCents(c).toFixed(2).replace('.', ',')
 
@@ -298,6 +320,7 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
     defaultValues: transaction
       ? {
           date: transaction.dueDate,
+          price: '',
           total: moneyText(transaction.amount),
           liters: String(transaction.fuel?.liters ?? '').replace('.', ','),
           odometer: transaction.odometer != null ? String(transaction.odometer) : '',
@@ -305,10 +328,19 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
           fullTank: transaction.fuel?.fullTank ?? true,
           paymentMethod: (transaction.paymentMethod ?? 'pix') as PaymentMethod,
         }
-      : { date: todayISO(), total: '', liters: '', odometer: '', type: defaultType, fullTank: true, paymentMethod: 'pix' as PaymentMethod },
+      : { date: todayISO(), price: '', total: '', liters: '', odometer: '', type: defaultType, fullTank: true, paymentMethod: 'pix' as PaymentMethod },
   })
-  const [total, liters, type, fullTank, paymentMethod] = useWatch({ control, name: ['total', 'liters', 'type', 'fullTank', 'paymentMethod'] })
-  const perLiter = parseMoneyInput(total) > 0 && parseMoneyInput(liters) > 0 ? toCents(parseMoneyInput(total) / parseMoneyInput(liters)) : null
+  const [price, total, liters, type, fullTank, paymentMethod] = useWatch({
+    control,
+    name: ['price', 'total', 'liters', 'type', 'fullTank', 'paymentMethod'],
+  })
+  const solved = solveFuel(price, liters, total)
+  // Mostra o valor calculado só no campo que a pessoa deixou em branco.
+  const computed = solved && {
+    price: !positive(price) ? formatMoney(toCents(solved.price)) : null,
+    liters: !positive(liters) ? `${decimalText(solved.liters, 2)} L` : null,
+    total: !positive(total) ? formatMoney(toCents(solved.total)) : null,
+  }
   const e = formState.errors
 
   return (
@@ -316,12 +348,13 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
       noValidate
       className={formClass}
       onSubmit={handleSubmit((v) => {
-        const l = parseMoneyInput(v.liters)
+        const fuel = solveFuel(v.price, v.liters, v.total)!
+        const l = fuel.liters
         const next = keepIdentity(
           transaction,
           expense(vehicle, {
             description: `Abastecimento · ${FUEL_LABELS[v.type]}`,
-            amount: cents(v.total),
+            amount: toCents(fuel.total),
             subcategoryId: FUEL_SUBCATEGORY_ID,
             dueDate: v.date as ISODate,
             paymentMethod: v.paymentMethod,
@@ -336,19 +369,30 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
       })}
     >
       <div className={bodyClass}>
-        <div className="grid grid-cols-2 gap-3">
-          <Field id="f-total" label="Total pago" error={e.total?.message}>
+        <div className="grid grid-cols-3 gap-2">
+          <Field id="f-price" label="Preço do litro">
             <Affix before="R$">
-              <Input id="f-total" inputMode="decimal" className="pl-10" aria-invalid={!!e.total} {...register('total')} />
+              <Input id="f-price" inputMode="decimal" className="pl-9" placeholder={computed?.price?.replace('R$', '').trim() ?? ''} {...register('price')} />
             </Affix>
           </Field>
-          <Field id="f-liters" label="Litros" error={e.liters?.message}>
+          <Field id="f-liters" label="Litros">
             <Affix after="L">
-              <Input id="f-liters" inputMode="decimal" className="pr-8" aria-invalid={!!e.liters} {...register('liters')} />
+              <Input id="f-liters" inputMode="decimal" className="pr-7" aria-invalid={!!e.liters} placeholder={computed?.liters?.replace(' L', '') ?? ''} {...register('liters')} />
+            </Affix>
+          </Field>
+          <Field id="f-total" label="Total pago">
+            <Affix before="R$">
+              <Input id="f-total" inputMode="decimal" className="pl-9" placeholder={computed?.total?.replace('R$', '').trim() ?? ''} {...register('total')} />
             </Affix>
           </Field>
         </div>
-        {perLiter !== null && <p className="-mt-3 text-sm text-muted-foreground">{formatMoney(perLiter)} por litro</p>}
+        <p className={cn('-mt-3 text-sm', e.liters ? 'text-expense' : 'text-muted-foreground')} role={e.liters ? 'alert' : undefined}>
+          {e.liters
+            ? e.liters.message
+            : solved
+              ? `${decimalText(solved.liters, 2)} L × ${formatMoney(toCents(solved.price))} = ${formatMoney(toCents(solved.total))}`
+              : 'Preencha dois dos três; o terceiro é calculado.'}
+        </p>
         {vehicle.fuel === 'flex' && (
           <div className="flex flex-col gap-2">
             <Label>Combustível</Label>
