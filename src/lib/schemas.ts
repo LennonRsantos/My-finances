@@ -66,6 +66,9 @@ export function parseMoneyInput(raw: unknown): number {
   if (typeof raw !== 'string') return Number.NaN
   const cleaned = raw.replace(/[^\d.,]/g, '')
   if (!cleaned) return Number.NaN
-  const normalized = cleaned.includes(',') ? cleaned.replace(/\./g, '').replace(',', '.') : cleaned
-  return Number(normalized)
+  if (cleaned.includes(',')) return Number(cleaned.replace(/\./g, '').replace(',', '.'))
+  // Sem vírgula, ponto seguido de grupos de 3 dígitos é milhar: "1.500" = 1500, "1.250.000" = 1250000.
+  // Senão é decimal: "6.29" = 6,29.
+  if (/^\d{1,3}(\.\d{3})+$/.test(cleaned)) return Number(cleaned.replace(/\./g, ''))
+  return Number(cleaned)
 }
