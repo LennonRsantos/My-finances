@@ -1,4 +1,4 @@
-import { Bike, Car, CheckCircle2, ChevronRight, Fuel, Gauge, Pencil, PiggyBank, Plus, Receipt, Scale, ShieldCheck, Truck, Wrench, type LucideIcon } from 'lucide-react'
+import { Bike, Car, CheckCircle2, ChevronRight, Fuel, Gauge, Pencil, PiggyBank, Save, Plus, Receipt, Scale, ShieldCheck, Truck, Wrench, type LucideIcon } from 'lucide-react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { useMemo, useState, type ReactNode } from 'react'
@@ -17,7 +17,12 @@ import { parseMoneyInput } from '@/lib/schemas'
 import { cn } from '@/lib/utils'
 import {
   costSummary,
+  costPerKm,
   currentOdometer,
+  formatPerKm,
+  DEFAULT_KM_PER_MONTH,
+  kmPerMonth,
+  reminderSaving,
   vehicleReserve,
   type ReserveItem,
   DOCUMENT_PRESETS,
@@ -32,7 +37,7 @@ import {
   type ReminderLevel,
 } from '@/lib/vehicle'
 import { useFinanceStore } from '@/store/finance-store'
-import { FUEL_LABELS, type Vehicle, type VehicleKind } from '@/types/finance'
+import { FUEL_LABELS, type FuelType, type Vehicle, type VehicleKind } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 
 const kindIcon: Record<VehicleKind, LucideIcon> = { carro: Car, moto: Bike, outro: Truck }
@@ -67,9 +72,11 @@ function RemindersCard({
   open: (d: VehicleDialogState) => void
 }) {
   const reminders = useFinanceStore(useShallow((s) => s.maintenance.filter((r) => r.vehicleId === vehicle.id)))
+  const transactions = useFinanceStore((s) => s.transactions)
+  const kmMonth = kmPerMonth(vehicle, transactions) ?? DEFAULT_KM_PER_MONTH
   const today = todayISO()
   const rows = reminders
-    .map((r) => ({ r, s: reminderStatus(r, currentKm, today) }))
+    .map((r) => ({ r, s: reminderStatus(r, currentKm, today), save: reminderSaving(r, currentKm, kmMonth, today) }))
     .sort((a, b) => b.s.progress - a.s.progress)
 
   return (
@@ -103,7 +110,7 @@ function RemindersCard({
           />
         ) : (
           <ul className="divide-y">
-            {rows.map(({ r, s }) => {
+            {rows.map(({ r, s, save }) => {
               const parts = [
                 s.kmLeft !== null && (s.kmLeft >= 0 ? `faltam ${formatKm(s.kmLeft)}` : `passou ${formatKm(-s.kmLeft)}`),
                 s.daysLeft !== null &&
@@ -123,6 +130,15 @@ function RemindersCard({
                         <Badge tone={levelTone[s.level]}>{levelLabel[s.level]}</Badge>
                       </span>
                       <span className="block text-xs text-muted-foreground">{parts.join(' ou ')}</span>
+                      {save ? (
+                        <span className="block text-xs font-medium text-info">
+                          Guarde {formatMoney(save.average)}/mês
+                          {save.toNext !== null && save.monthsToNext !== null && save.toNext - save.average > 100 &&
+                            (save.monthsToNext <= 0 ? ` · venceu: ${formatMoney(save.toNext)}` : ` · ${formatMoney(save.toNext)}/mês até a próxima`)}
+                        </span>
+                      ) : (
+                        <span className="block text-xs text-muted-foreground">Informe o custo para saber quanto guardar</span>
+                      )}
                     </button>
                     <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', vehicle, currentKm, reminder: r })}>
                       <CheckCircle2 />
@@ -216,11 +232,22 @@ function CostsCard({ vehicleId }: { vehicleId: string }) {
 // Abastecimentos
 // ---------------------------------------------------------------------------
 
+/** Abastecimentos, consumo e preço do combustível num lugar só. */
 function FuelCard({ stats, vehicle, currentKm, open }: { stats: FuelStats; vehicle: Vehicle; currentKm: number; open: (d: VehicleDialogState) => void }) {
   const segment = new Map(stats.segments.map((s) => [s.closingId, s.kmPerLiter]))
   const [showAll, setShowAll] = useState(false)
   const all = [...stats.fills].reverse()
-  const recent = showAll ? all : all.slice(0, 8)
+  const recent = showAll ? all : all.slice(0, 6)
+  const withKm = stats.fills.filter((t) => t.odometer != null).length
+  const fuelPerKm = stats.pricePerLiter !== null && stats.average ? stats.pricePerLiter / stats.average : null
+  const prices = (Object.entries(stats.lastPrice) as [FuelType, number][]).sort(([a], [b]) => a.localeCompare(b))
+
+  const tiles: [string, string, string | null][] = [
+    ['Consumo médio', stats.average ? formatKmPerLiter(stats.average) : '—', stats.average && stats.approximate ? 'aproximado' : null],
+    ['Último trecho', stats.last ? formatKmPerLiter(stats.last) : '—', null],
+    ['Preço médio do litro', stats.pricePerLiter !== null ? formatMoney(stats.pricePerLiter) : '—', null],
+    ['Combustível por km', fuelPerKm !== null ? formatPerKm(fuelPerKm) : '—', null],
+  ]
 
   return (
     <Card>
@@ -228,20 +255,48 @@ function FuelCard({ stats, vehicle, currentKm, open }: { stats: FuelStats; vehic
         <div className="flex flex-col gap-1.5">
           <CardTitle className="flex items-center gap-2">
             <Fuel className="size-5" />
-            Abastecimentos
+            Abastecimento e consumo
           </CardTitle>
           <CardDescription>
-            {stats.pricePerLiter !== null
-              ? `${stats.liters.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} L no total, média de ${formatMoney(stats.pricePerLiter)} por litro.`
-              : 'Registre com tanque cheio e km para ver o consumo.'}
+            {stats.average
+              ? stats.approximate
+                ? 'Média aproximada pelos litros de cada abastecimento. Complete o tanque duas vezes seguidas para o valor exato.'
+                : 'Medido entre abastecimentos de tanque cheio.'
+              : withKm < 2
+                ? `Registre o km do painel em ${2 - withKm === 2 ? 'dois abastecimentos' : 'mais um abastecimento'} para calcular o consumo.`
+                : 'Os km registrados ainda não aumentaram entre os abastecimentos.'}
           </CardDescription>
         </div>
-        <Button size="sm" variant="outline" onClick={() => open({ kind: 'fuel', vehicle, currentKm })}>
+        <Button size="sm" onClick={() => open({ kind: 'fuel', vehicle, currentKm })}>
           <Plus />
           Abastecer
         </Button>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {tiles.map(([label, value, note]) => (
+            <div key={label} className="flex flex-col gap-0.5 rounded-xl bg-muted px-3 py-2.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <span className="text-base font-semibold tabular-nums">{value}</span>
+              {note && <span className="text-xs text-muted-foreground">{note}</span>}
+            </div>
+          ))}
+        </div>
+
+        {prices.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Último preço pago:{' '}
+            {prices.map(([type, price], i) => (
+              <span key={type}>
+                {i > 0 && ' · '}
+                {FUEL_LABELS[type]} <span className="font-medium text-foreground tabular-nums">{formatMoney(price)}</span>
+              </span>
+            ))}
+          </p>
+        )}
+
+        {vehicle.fuel === 'flex' && <FuelCompare key={vehicle.id} stats={stats} vehicle={vehicle} />}
+
         {recent.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum abastecimento ainda.</p>
         ) : (
@@ -257,34 +312,95 @@ function FuelCard({ stats, vehicle, currentKm, open }: { stats: FuelStats; vehic
                     aria-label={`Editar abastecimento de ${formatDateShort(t.dueDate)}`}
                     className="flex w-full items-center gap-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {formatDateShort(t.dueDate)} · {t.fuel ? FUEL_LABELS[t.fuel.type] : ''}
-                      {t.fuel && !t.fuel.fullTank && <span className="font-normal text-muted-foreground"> · parcial</span>}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {liters.toLocaleString('pt-BR')} L · {liters ? formatMoney(Math.round(t.amount / liters)) : '—'}/L
-                      {t.odometer != null && <> · {formatKm(t.odometer)}</>}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold tabular-nums">{formatMoney(t.amount)}</p>
-                    {kml && <p className="text-xs text-income">{formatKmPerLiter(kml)}</p>}
-                  </div>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">
+                        {formatDateShort(t.dueDate)} · {t.fuel ? FUEL_LABELS[t.fuel.type] : ''}
+                        {t.fuel && !t.fuel.fullTank && <span className="font-normal text-muted-foreground"> · parcial</span>}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {liters.toLocaleString('pt-BR')} L · {liters ? formatMoney(Math.round(t.amount / liters)) : '—'}/L
+                        {t.odometer != null ? <> · {formatKm(t.odometer)}</> : <span className="text-warning"> · sem km</span>}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-semibold tabular-nums">{formatMoney(t.amount)}</p>
+                      {kml && <p className="text-xs text-income">{formatKmPerLiter(kml)}</p>}
+                    </div>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                   </button>
                 </li>
               )
             })}
           </ul>
         )}
-        {all.length > 8 && (
-          <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAll((v) => !v)}>
+        {all.length > 6 && (
+          <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAll((v) => !v)}>
             {showAll ? 'Mostrar menos' : `Ver todos (${all.length})`}
           </Button>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * Etanol ou gasolina, dentro do card de abastecimento. Começa com o último
+ * preço pago de cada um; usa o consumo real do carro quando há histórico.
+ */
+function FuelCompare({ stats, vehicle }: { stats: FuelStats; vehicle: Vehicle }) {
+  const saveVehicle = useFinanceStore((s) => s.saveVehicle)
+  const saved = vehicle.pumpPrices
+  const initial = (c: number | null | undefined) => (c ? (c / 100).toFixed(2).replace('.', ',') : '')
+  // Começa com os preços salvos; sem eles, com o último preço pago de cada um.
+  const [ethanol, setEthanol] = useState(() => initial(saved?.etanol ?? stats.lastPrice.etanol))
+  const [gasoline, setGasoline] = useState(() => initial(saved?.gasolina ?? stats.lastPrice.gasolina))
+  const e = toCents(parseMoneyInput(ethanol) || 0)
+  const g = toCents(parseMoneyInput(gasoline) || 0)
+  const result = e > 0 && g > 0 ? ethanolVsGasoline(e, g, stats.byType) : null
+  const changed = (saved?.etanol ?? null) !== (e || null) || (saved?.gasolina ?? null) !== (g || null)
+  const save = () => saveVehicle({ ...vehicle, pumpPrices: { etanol: e || null, gasolina: g || null, savedAt: todayISO() } })
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border p-3">
+      <p className="flex items-center gap-2 text-sm font-medium">
+        <Scale className="size-4" />
+        Etanol ou gasolina? Preço no posto hoje:
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        {(
+          [
+            ['ethanol', 'Etanol', ethanol, setEthanol],
+            ['gasoline', 'Gasolina', gasoline, setGasoline],
+          ] as const
+        ).map(([id, label, value, set]) => (
+          <div key={id} className="flex flex-col gap-1.5">
+            <label htmlFor={`cmp-${id}`} className="text-xs text-muted-foreground">
+              {label}
+            </label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+              <Input id={`cmp-${id}`} inputMode="decimal" placeholder="0,00" className="pl-10" value={value} onChange={(ev) => set(ev.target.value)} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {result && (
+        <p role="status" className={cn('rounded-lg px-3 py-2 text-sm', result.best === 'etanol' ? 'bg-income-soft text-income' : 'bg-info-soft text-info')}>
+          <span className="font-semibold">{result.best === 'etanol' ? 'Etanol compensa.' : 'Gasolina compensa.'}</span> Etanol custa{' '}
+          {Math.round(result.ratio * 100)}% da gasolina; compensa até {Math.round(result.threshold * 100)}%
+          {result.measured ? ', pelo consumo real do seu veículo.' : ' (regra geral; com consumo dos dois combustíveis, o app usa o do seu veículo).'}
+        </p>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground" role="status">
+          {saved && !changed ? `Preços salvos em ${formatDateShort(saved.savedAt)}.` : changed ? 'Preços alterados, ainda não salvos.' : ''}
+        </span>
+        <Button size="sm" variant={changed ? 'default' : 'outline'} disabled={!changed || (!e && !g)} onClick={save}>
+          <Save />
+          {saved && !changed ? 'Salvo' : 'Salvar preços'}
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -345,57 +461,6 @@ function ExpensesCard({ vehicle, currentKm, open }: { vehicle: Vehicle; currentK
           <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAll((v) => !v)}>
             {showAll ? 'Mostrar menos' : `Ver todos (${all.length})`}
           </Button>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-/** Etanol ou gasolina: usa o consumo real do carro quando já há histórico dos dois. */
-function FuelCompareCard({ stats }: { stats: FuelStats }) {
-  const [ethanol, setEthanol] = useState('')
-  const [gasoline, setGasoline] = useState('')
-  const e = toCents(parseMoneyInput(ethanol) || 0)
-  const g = toCents(parseMoneyInput(gasoline) || 0)
-  const result = e > 0 && g > 0 ? ethanolVsGasoline(e, g, stats.byType) : null
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Scale className="size-5" />
-          Etanol ou gasolina?
-        </CardTitle>
-        <CardDescription>Digite os preços do posto.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          {(
-            [
-              ['ethanol', 'Etanol', ethanol, setEthanol],
-              ['gasoline', 'Gasolina', gasoline, setGasoline],
-            ] as const
-          ).map(([id, label, value, set]) => (
-            <div key={id} className="flex flex-col gap-2">
-              <label htmlFor={`cmp-${id}`} className="text-sm font-medium">
-                {label}
-              </label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
-                <Input id={`cmp-${id}`} inputMode="decimal" placeholder="0,00" className="pl-10" value={value} onChange={(ev) => set(ev.target.value)} />
-              </div>
-            </div>
-          ))}
-        </div>
-        {result && (
-          <p
-            role="status"
-            className={cn('rounded-xl px-3 py-2 text-sm', result.best === 'etanol' ? 'bg-income-soft text-income' : 'bg-info-soft text-info')}
-          >
-            <span className="font-semibold">{result.best === 'etanol' ? 'Etanol compensa.' : 'Gasolina compensa.'}</span> Etanol custa{' '}
-            {Math.round(result.ratio * 100)}% da gasolina; compensa até {Math.round(result.threshold * 100)}%
-            {result.measured ? ', pelo consumo real do seu veículo.' : ' (regra geral; com histórico dos dois, o app usa o consumo do seu veículo).'}
-          </p>
         )}
       </CardContent>
     </Card>
@@ -476,6 +541,7 @@ function ReserveTab({ vehicle, currentKm, open }: { vehicle: Vehicle; currentKm:
     useShallow((s) => ({ transactions: s.transactions, maintenance: s.maintenance, recurringCosts: s.recurringCosts })),
   )
   const r = vehicleReserve(vehicle, transactions, maintenance, recurringCosts, currentYearMonth())
+  const perKm = costPerKm(vehicle, transactions, maintenance, recurringCosts)
   const parts = [
     { key: 'manutencao', label: 'Manutenção', value: r.maintenance.reduce((a, i) => a + i.monthly, 0) },
     { key: 'anuais', label: 'Gastos anuais', value: r.annual.reduce((a, i) => a + i.monthly, 0) },
@@ -513,6 +579,50 @@ function ReserveTab({ vehicle, currentKm, open }: { vehicle: Vehicle; currentKm:
         <p className="text-xs text-muted-foreground">
           Base de {formatKm(r.kmPerMonth)} por mês {r.kmMeasured ? '(medido pelos seus registros de km)' : '(estimativa; registre o km nos abastecimentos para medir)'}.
         </p>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Gauge className="size-4" />
+            Quanto custa cada km
+          </CardTitle>
+          <CardDescription>
+            Rodando ~{formatKm(perKm.kmPerMonth)} por mês, cada km custa {perKm.total != null ? formatPerKm(perKm.total) : '—'}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ul className="divide-y text-sm">
+            {(
+              [
+                ['Combustível', perKm.fuel, perKm.fuel == null ? 'Abasteça com km e tanque cheio duas vezes para medir o consumo' : 'preço médio do litro ÷ consumo'],
+                [
+                  'Manutenção',
+                  perKm.maintenance,
+                  perKm.maintenanceSource === 'planejada'
+                    ? 'pelos lembretes com custo (o que você pretende fazer)'
+                    : perKm.maintenanceSource === 'realizada'
+                      ? 'pelo que você já gastou ÷ km rodados'
+                      : 'Cadastre o custo nos lembretes de manutenção',
+                ],
+                ['Fixos', perKm.fixed, perKm.fixed == null ? 'IPVA, seguro e depreciação entram aqui quando cadastrados' : 'IPVA, seguro, licenciamento e depreciação'],
+              ] as const
+            ).map(([label, value, detail]) => (
+              <li key={label} className="flex items-center justify-between gap-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block font-medium">{label}</span>
+                  <span className="block text-xs text-muted-foreground">{detail}</span>
+                </span>
+                <span className="shrink-0 tabular-nums">{value != null ? formatPerKm(value) : '—'}</span>
+              </li>
+            ))}
+          </ul>
+          {perKm.running != null && (
+            <p className="pt-2 text-xs text-muted-foreground">
+              Só para rodar (combustível + manutenção): {formatPerKm(perKm.running)} por km. Uma viagem de 100 km custa ~{formatPerKm(perKm.running * 100)}.
+            </p>
+          )}
+        </CardContent>
       </Card>
 
       <ReserveSection
@@ -582,7 +692,9 @@ function ReserveTab({ vehicle, currentKm, open }: { vehicle: Vehicle; currentKm:
 }
 
 export function VehiclePage() {
-  const { vehicles, transactions } = useFinanceStore(useShallow((s) => ({ vehicles: s.vehicles, transactions: s.transactions })))
+  const { vehicles, transactions, maintenance, recurringCosts } = useFinanceStore(
+    useShallow((s) => ({ vehicles: s.vehicles, transactions: s.transactions, maintenance: s.maintenance, recurringCosts: s.recurringCosts })),
+  )
   const active = vehicles.filter((v) => v.active).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<VehicleDialogState>(null)
@@ -591,6 +703,7 @@ export function VehiclePage() {
 
   const currentKm = vehicle ? currentOdometer(vehicle, transactions) : 0
   const stats = vehicle ? fuelStats(transactions, vehicle.id) : null
+  const perKm = vehicle ? costPerKm(vehicle, transactions, maintenance, recurringCosts) : null
   const month = vehicle ? costSummary(transactions, vehicle.id, currentYearMonth()) : null
 
   return (
@@ -685,14 +798,24 @@ export function VehiclePage() {
                 <Stat
                   icon={Gauge}
                   label="Custo por km"
-                  value={month?.costPerKm != null ? formatMoney(month.costPerKm) : '—'}
-                  hint={month?.costPerKm == null ? 'Registre o km nos gastos' : undefined}
+                  value={perKm?.total != null ? formatPerKm(perKm.total) : '—'}
+                  hint={
+                    perKm?.total != null
+                      ? [
+                          perKm.fuel != null && `combustível ${formatPerKm(perKm.fuel)}`,
+                          perKm.maintenance != null && `manutenção ${formatPerKm(perKm.maintenance)}`,
+                          perKm.fixed != null && `fixos ${formatPerKm(perKm.fixed)}`,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
+                      : 'Abasteça com km e tanque cheio ou cadastre o custo das manutenções'
+                  }
                 />
                 <Stat
                   icon={Fuel}
                   label="Consumo médio"
                   value={stats?.average ? formatKmPerLiter(stats.average) : '—'}
-                  hint={!stats?.average ? 'Precisa de 2 tanques cheios' : undefined}
+                  hint={!stats?.average ? 'Registre o km em 2 abastecimentos' : stats.approximate ? 'aproximado' : undefined}
                 />
                 <Stat icon={Car} label="Km atual" value={formatKm(currentKm)} />
               </div>
@@ -716,7 +839,6 @@ export function VehiclePage() {
               <CostsCard vehicleId={vehicle.id} />
               {stats && <FuelCard stats={stats} vehicle={vehicle} currentKm={currentKm} open={setDialog} />}
               <ExpensesCard vehicle={vehicle} currentKm={currentKm} open={setDialog} />
-              {vehicle.fuel === 'flex' && stats && <FuelCompareCard stats={stats} />}
               <DocumentsCard vehicle={vehicle} open={setDialog} />
               </>
             )}

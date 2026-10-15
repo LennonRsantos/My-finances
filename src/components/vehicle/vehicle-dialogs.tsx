@@ -16,7 +16,12 @@ import { parseMoneyInput } from '@/lib/schemas'
 import { cn, createId } from '@/lib/utils'
 import {
   DEFAULT_DEPRECIATION_RATE,
+  DEFAULT_KM_PER_MONTH,
   DEFAULT_REMINDERS,
+  cycleLabel,
+  formatKm,
+  kmPerMonth,
+  reminderSaving,
   DOCUMENT_PRESETS,
   FUEL_SUBCATEGORY_ID,
   MAINTENANCE_SUBCATEGORY_ID,
@@ -242,7 +247,7 @@ const fuelSchema = z
     price: z.string().trim(),
     total: z.string().trim(),
     liters: z.string().trim(),
-    odometer: km,
+    odometer: km.refine((v) => v !== '', 'Informe o km do painel: sem ele o consumo não é calculado'),
     type: z.enum(FUEL_TYPES),
     fullTank: z.boolean(),
     paymentMethod: z.enum(PAYMENT_METHODS),
@@ -407,7 +412,7 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
             />
           </div>
         )}
-        <Field id="f-km" label="Km no painel" error={e.odometer?.message} hint={`Último registrado: ${currentKm.toLocaleString('pt-BR')} km. Sem km, o consumo não é calculado.`}>
+        <Field id="f-km" label="Km no painel" error={e.odometer?.message} hint={`Último registrado: ${currentKm.toLocaleString('pt-BR')} km.`}>
           <Affix after="km">
             <Input id="f-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.odometer} {...register('odometer')} />
           </Affix>
@@ -569,7 +574,10 @@ function ReminderForm({
 }) {
   const { saveReminder, removeReminder } = useFinanceStore(useShallow((s) => ({ saveReminder: s.saveReminder, removeReminder: s.removeReminder })))
   const existing = useFinanceStore(useShallow((s) => s.maintenance.filter((r) => r.vehicleId === vehicle.id).map((r) => r.name)))
-  const { register, handleSubmit, setValue, formState } = useForm({
+  const transactions = useFinanceStore((s) => s.transactions)
+  const measuredKm = kmPerMonth(vehicle, transactions)
+  const kmMonth = measuredKm ?? DEFAULT_KM_PER_MONTH
+  const { register, handleSubmit, setValue, control, formState } = useForm({
     resolver: zodResolver(reminderSchema),
     defaultValues: {
       name: reminder?.name ?? '',
@@ -582,6 +590,23 @@ function ReminderForm({
   })
   const e = formState.errors
   const presets = DEFAULT_REMINDERS.filter((p) => !existing.includes(p.name))
+  const [wKm, wMonths, wLastKm, wLastDate, wCost] = useWatch({
+    control,
+    name: ['intervalKm', 'intervalMonths', 'lastKm', 'lastDate', 'estimatedCost'],
+  })
+  // Prévia ao vivo: quanto guardar por mês com os valores digitados.
+  const saving = reminderSaving(
+    {
+      intervalKm: toKm(wKm),
+      intervalMonths: /^\d+$/.test(wMonths) && Number(wMonths) > 0 ? Number(wMonths) : null,
+      lastKm: toKm(wLastKm),
+      lastDate: /^\d{4}-\d{2}-\d{2}$/.test(wLastDate) ? (wLastDate as ISODate) : null,
+      estimatedCost: wCost ? cents(wCost) : null,
+    },
+    currentKm,
+    kmMonth,
+    todayISO(),
+  )
 
   return (
     <form
@@ -661,6 +686,25 @@ function ReminderForm({
             <Input id="r-cost" inputMode="decimal" className="pl-10" aria-invalid={!!e.estimatedCost} {...register('estimatedCost')} />
           </Affix>
         </Field>
+        {saving && (
+          <div role="status" className="flex flex-col gap-1 rounded-xl bg-info-soft p-3 text-sm text-info">
+            <p>
+              <span className="font-semibold">Guarde {formatMoney(saving.average)} por mês.</span> A troca acontece {cycleLabel(saving.cycleMonths)}
+              {saving.by === 'km'
+                ? `, pelos km (você roda ~${formatKm(kmMonth)} por mês${measuredKm ? '' : ', estimativa'}).`
+                : ', pelo tempo.'}
+            </p>
+            {saving.monthsToNext !== null && saving.toNext !== null && (
+              <p>
+                {saving.monthsToNext <= 0
+                  ? `Já venceu: separe ${formatMoney(saving.toNext)} agora.`
+                  : Math.abs(saving.toNext - saving.average) > 100
+                    ? `A próxima é em ~${Math.max(1, Math.round(saving.monthsToNext))} ${Math.round(saving.monthsToNext) <= 1 ? 'mês' : 'meses'}: começando do zero, guarde ${formatMoney(saving.toNext)} por mês até lá.`
+                    : `A próxima é em ~${Math.round(saving.monthsToNext)} meses.`}
+              </p>
+            )}
+          </div>
+        )}
       </div>
       <FormActions
         submitLabel={reminder ? 'Salvar' : 'Criar lembrete'}

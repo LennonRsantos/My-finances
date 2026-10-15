@@ -139,6 +139,14 @@ export interface Transaction {
   odometer?: number | null
   /** Presente quando o lançamento é um abastecimento */
   fuel?: FuelLog | null
+  /** Conta compartilhada que gerou este lançamento */
+  sharedBillId?: SharedBill['id'] | null
+  /** Com quem a conta é dividida (nome ou @), para o selo na lista */
+  sharedWith?: string | null
+  /** Versão da conta compartilhada usada para gerar o lançamento */
+  sharedVersion?: number | null
+  /** A conta foi editada e espera nova aceitação: lançamento em espera */
+  sharedSuspended?: boolean
   createdAt: string
 }
 
@@ -232,6 +240,8 @@ export interface Vehicle {
   marketValue?: Cents | null
   /** Quanto o veículo perde de valor por ano, em % (10 = 10% a.a.) */
   depreciationRate?: Percent | null
+  /** Últimos preços do posto salvos no comparador etanol × gasolina */
+  pumpPrices?: { etanol: Cents | null; gasolina: Cents | null; savedAt: ISODate } | null
   active: boolean
   createdAt: string
 }
@@ -268,6 +278,57 @@ export const FUEL_LABELS: Record<FuelType, string> = {
   diesel: 'Diesel',
   gnv: 'GNV',
   eletrico: 'Elétrico',
+}
+
+// ---------------------------------------------------------------------------
+// Contas compartilhadas
+// ---------------------------------------------------------------------------
+
+/**
+ * `SPLIT_PAYMENT`: cada um paga sua parte direto ao credor.
+ * `SINGLE_PAYER`: o criador pagou tudo e o parceiro reembolsa a parte dele.
+ */
+export const SHARED_PAYER_TYPES = ['SPLIT_PAYMENT', 'SINGLE_PAYER'] as const
+export type SharedPayerType = (typeof SHARED_PAYER_TYPES)[number]
+
+export type SharedBillStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED'
+export type SharedParticipantStatus = 'PENDING_APPROVAL' | 'ACCEPTED' | 'REJECTED'
+
+export interface SharedBillParticipant {
+  userId: string
+  /** @ único do participante, sem o "@" */
+  handle: string
+  name: string | null
+  role: 'creator' | 'invitee'
+  /** % da conta que cabe ao participante (ex.: 50) */
+  splitPercentage: Percent
+  /** Valor total da cota do participante */
+  calculatedAmount: Cents
+  status: SharedParticipantStatus
+}
+
+/** Conta mãe, em `sharedBills/{id}` (fora de `users/`, lida pelos dois participantes). */
+export interface SharedBill {
+  id: ID
+  title: string
+  totalAmount: Cents
+  installments: number
+  /** Vencimento da 1ª parcela */
+  firstDueDate: ISODate
+  categoryId: Category['id']
+  payerType: SharedPayerType
+  status: SharedBillStatus
+  createdBy: string
+  invitedUid: string
+  /** [criador, convidado] */
+  participants: [SharedBillParticipant, SharedBillParticipant]
+  /** Sobe a cada edição do criador; os lançamentos guardam a versão que geraram */
+  version: number
+  /** Criador já viu a recusa (some o aviso) */
+  creatorAcknowledged: boolean
+  respondedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 // ---------------------------------------------------------------------------

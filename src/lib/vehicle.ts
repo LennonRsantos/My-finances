@@ -37,51 +37,72 @@ export interface FuelSegment {
 export interface FuelStats {
   fills: Transaction[]
   segments: FuelSegment[]
-  /** km/l médio dos trechos medidos; `null` sem dois tanques cheios */
+  /** km/l médio dos trechos medidos; `null` sem ao menos dois abastecimentos com km */
   average: number | null
   last: number | null
+  /** `true` quando não há dois tanques cheios e a média vem dos litros de cada abastecimento */
+  approximate: boolean
   /** Média por combustível (no flex, para comparar etanol e gasolina) */
   byType: Partial<Record<FuelType, number>>
   /** Preço médio do litro, em centavos */
   pricePerLiter: Cents | null
+  /** Último preço do litro pago em cada combustível, em centavos */
+  lastPrice: Partial<Record<FuelType, Cents>>
   liters: number
 }
 
 /**
- * Método do tanque cheio: entre dois abastecimentos com tanque cheio, o
- * consumo é km rodados ÷ litros colocados depois do primeiro (inclui os
- * parciais no meio). Abastecimentos sem km ficam fora da conta.
+ * Consumo (km/l), em duas tentativas:
+ * 1. Tanque cheio (mais preciso): entre dois abastecimentos de tanque cheio,
+ *    km rodados ÷ litros colocados depois do primeiro (inclui os parciais).
+ * 2. Sem dois tanques cheios: entre dois abastecimentos com km, km rodados ÷
+ *    litros colocados no segundo (e nos sem km entre eles). Aproximado, mas
+ *    a média de vários abastecimentos fica perto do real.
+ * Abastecimento sem km não quebra a conta: os litros dele entram no trecho.
  */
 export function fuelStats(transactions: Transaction[], vehicleId: string): FuelStats {
   const fills = transactions
     .filter((t) => t.vehicleId === vehicleId && t.fuel)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || (a.odometer ?? 0) - (b.odometer ?? 0))
 
-  const segments: FuelSegment[] = []
-  let startKm: number | null = null
-  let liters = 0
-  for (const t of fills) {
-    const fuel = t.fuel!
-    if (t.odometer == null) {
-      startKm = null
-      continue
+  const measure = (fullTankOnly: boolean): FuelSegment[] => {
+    const out: FuelSegment[] = []
+    let startKm: number | null = null
+    let liters = 0
+    for (const t of fills) {
+      const fuel = t.fuel!
+      if (t.odometer == null) {
+        if (startKm !== null) liters += fuel.liters
+        continue
+      }
+      const opens = fullTankOnly ? fuel.fullTank : true
+      if (startKm === null) {
+        if (opens) startKm = t.odometer
+        continue
+      }
+      liters += fuel.liters
+      if (fullTankOnly && !fuel.fullTank) continue
+      const km = t.odometer - startKm
+      if (km > 0 && liters > 0) out.push({ closingId: t.id, km, liters, kmPerLiter: km / liters, type: fuel.type })
+      startKm = t.odometer
+      liters = 0
     }
-    if (startKm === null) {
-      if (fuel.fullTank) startKm = t.odometer
-      continue
-    }
-    liters += fuel.liters
-    if (!fuel.fullTank) continue
-    const km = t.odometer - startKm
-    if (km > 0 && liters > 0) segments.push({ closingId: t.id, km, liters, kmPerLiter: km / liters, type: fuel.type })
-    startKm = t.odometer
-    liters = 0
+    return out
   }
+
+  const precise = measure(true)
+  const approximate = precise.length === 0
+  const segments = approximate ? measure(false) : precise
 
   const ratio = (list: FuelSegment[]) =>
     list.length ? list.reduce((a, s) => a + s.km, 0) / list.reduce((a, s) => a + s.liters, 0) : null
+  // Por combustível só com tanque cheio: no método aproximado o trecho é rodado
+  // com o combustível anterior, e a atribuição por tipo sai errada.
   const byType: FuelStats['byType'] = {}
-  for (const type of new Set(segments.map((s) => s.type))) byType[type] = ratio(segments.filter((s) => s.type === type)) ?? undefined
+  for (const type of new Set(precise.map((s) => s.type))) byType[type] = ratio(precise.filter((s) => s.type === type)) ?? undefined
+
+  const lastPrice: FuelStats['lastPrice'] = {}
+  for (const t of fills) if (t.fuel && t.fuel.liters > 0) lastPrice[t.fuel.type] = Math.round(t.amount / t.fuel.liters)
 
   const totalLiters = fills.reduce((a, t) => a + (t.fuel?.liters ?? 0), 0)
   const totalAmount = fills.reduce((a, t) => a + t.amount, 0)
@@ -90,8 +111,10 @@ export function fuelStats(transactions: Transaction[], vehicleId: string): FuelS
     segments,
     average: ratio(segments),
     last: segments.at(-1)?.kmPerLiter ?? null,
+    approximate: approximate && segments.length > 0,
     byType,
     pricePerLiter: totalLiters > 0 ? Math.round(totalAmount / totalLiters) : null,
+    lastPrice,
     liters: totalLiters,
   }
 }
@@ -101,7 +124,9 @@ export function fuelStats(transactions: Transaction[], vehicleId: string): FuelS
  * carro (km/l etanol ÷ km/l gasolina) ou, sem histórico, da regra dos 70%.
  */
 export function ethanolVsGasoline(ethanol: Cents, gasoline: Cents, byType: FuelStats['byType']) {
-  const measured = byType.etanol && byType.gasolina ? byType.etanol / byType.gasolina : null
+  const raw = byType.etanol && byType.gasolina ? byType.etanol / byType.gasolina : null
+  // Carros flex ficam entre ~65% e 80%; fora de 60–85% o histórico ainda é pouco confiável.
+  const measured = raw !== null && raw >= 0.6 && raw <= 0.85 ? raw : null
   const threshold = measured ?? 0.7
   const ratio = gasoline > 0 ? ethanol / gasoline : 0
   return { threshold, measured: measured !== null, ratio, best: ratio <= threshold ? ('etanol' as const) : ('gasolina' as const) }
@@ -215,6 +240,65 @@ export function kmPerMonth(vehicle: Vehicle, transactions: Transaction[]): numbe
   return days >= 30 && km > 0 ? (km / days) * DAYS_PER_MONTH : null
 }
 
+/**
+ * De quantos em quantos meses a troca acontece, valendo o que vencer
+ * primeiro: o tempo ou os km rodados (pela média de km por mês).
+ */
+export function reminderCycle(
+  r: Pick<MaintenanceReminder, 'intervalKm' | 'intervalMonths'>,
+  kmMonth: number,
+): { months: number; by: 'km' | 'tempo' } | null {
+  const byKm = r.intervalKm && kmMonth > 0 ? r.intervalKm / kmMonth : Infinity
+  const byTime = r.intervalMonths ?? Infinity
+  const months = Math.min(byKm, byTime)
+  if (!Number.isFinite(months) || months <= 0) return null
+  return { months, by: byKm < byTime ? 'km' : 'tempo' }
+}
+
+export const cycleLabel = (months: number) => {
+  const every = Math.round(months)
+  return every <= 1 ? 'todo mês' : `a cada ~${every} meses`
+}
+
+export interface ReminderSaving {
+  /** Média por mês no longo prazo: custo ÷ intervalo */
+  average: Cents
+  cycleMonths: number
+  by: 'km' | 'tempo'
+  /** Meses até a próxima troca; ≤ 0 = já venceu */
+  monthsToNext: number | null
+  /** Quanto separar por mês para ter o valor até a próxima troca, começando do zero */
+  toNext: Cents | null
+}
+
+/**
+ * Quanto guardar por mês para uma manutenção. `average` é o ritmo de longo
+ * prazo; `toNext` é o que precisa por mês para juntar o custo até a próxima
+ * troca (maior quando ela está perto).
+ */
+export function reminderSaving(
+  r: Pick<MaintenanceReminder, 'intervalKm' | 'intervalMonths' | 'lastKm' | 'lastDate' | 'estimatedCost'>,
+  currentKm: number,
+  kmMonth: number,
+  today: ISODate,
+): ReminderSaving | null {
+  const cycle = reminderCycle(r, kmMonth)
+  if (!r.estimatedCost || !cycle) return null
+  const kmLeft = r.intervalKm && r.lastKm != null ? r.lastKm + r.intervalKm - currentKm : null
+  const monthsByKm = kmLeft !== null && kmMonth > 0 ? kmLeft / kmMonth : Infinity
+  const dueDate = r.intervalMonths && r.lastDate ? addMonthsISO(r.lastDate, r.intervalMonths) : null
+  const monthsByTime = dueDate ? differenceInCalendarDays(parseDate(dueDate), parseDate(today)) / DAYS_PER_MONTH : Infinity
+  const next = Math.min(monthsByKm, monthsByTime)
+  const monthsToNext = Number.isFinite(next) ? next : null
+  return {
+    average: Math.round(r.estimatedCost / cycle.months),
+    cycleMonths: cycle.months,
+    by: cycle.by,
+    monthsToNext,
+    toNext: monthsToNext === null ? null : monthsToNext <= 0 ? r.estimatedCost : Math.round(r.estimatedCost / Math.max(monthsToNext, 1)),
+  }
+}
+
 export interface ReserveItem {
   label: string
   /** Quanto guardar por mês, em centavos */
@@ -254,17 +338,12 @@ export function vehicleReserve(
   const own = reminders.filter((r) => r.vehicleId === vehicle.id)
   const maintenance: ReserveItem[] = []
   for (const r of own) {
-    if (!r.estimatedCost) continue
-    // Vale o que vencer primeiro: o tempo ou os km rodados.
-    const byKm = r.intervalKm ? r.intervalKm / kmMonth : Infinity
-    const byTime = r.intervalMonths ?? Infinity
-    const months = Math.min(byKm, byTime)
-    if (!Number.isFinite(months) || months <= 0) continue
-    const every = Math.round(months)
+    const cycle = reminderCycle(r, kmMonth)
+    if (!r.estimatedCost || !cycle) continue
     maintenance.push({
       label: r.name,
-      monthly: Math.round(r.estimatedCost / months),
-      detail: `${every <= 1 ? 'todo mês' : `a cada ~${every} meses`}${byKm < byTime ? ' (pelos km)' : ''}`,
+      monthly: Math.round(r.estimatedCost / cycle.months),
+      detail: `${cycleLabel(cycle.months)}${cycle.by === 'km' ? ' (pelos km)' : ''}`,
     })
   }
 
@@ -298,6 +377,71 @@ export function vehicleReserve(
     historicMaintenance: Math.round(historic / 12),
   }
 }
+
+// ---------------------------------------------------------------------------
+// Custo por km
+// ---------------------------------------------------------------------------
+
+export interface CostPerKm {
+  /** Centavos por km (com casas decimais; arredonde só para exibir) */
+  fuel: number | null
+  maintenance: number | null
+  /** De onde veio a manutenção: lembretes com custo (planejada) ou gastos já feitos */
+  maintenanceSource: 'planejada' | 'realizada' | null
+  /** IPVA, seguro, licenciamento e depreciação, divididos pelos km do mês */
+  fixed: number | null
+  /** Combustível + manutenção: o que cada km rodado gasta */
+  running: number | null
+  /** Tudo junto, inclusive os fixos */
+  total: number | null
+  kmPerMonth: number
+}
+
+/**
+ * Quanto custa cada km. Manutenção usa o que você pretende fazer (custo dos
+ * lembretes ÷ km entre trocas); sem lembretes com custo, usa o que já fez
+ * (manutenção e pneus ÷ km rodados desde o cadastro).
+ */
+export function costPerKm(
+  vehicle: Vehicle,
+  transactions: Transaction[],
+  reminders: MaintenanceReminder[],
+  recurring: RecurringCost[],
+): CostPerKm {
+  const measured = kmPerMonth(vehicle, transactions)
+  const kmMonth = measured ?? DEFAULT_KM_PER_MONTH
+  const fs = fuelStats(transactions, vehicle.id)
+  const fuel = fs.pricePerLiter !== null && fs.average ? fs.pricePerLiter / fs.average : null
+
+  let planned = 0
+  for (const r of reminders) {
+    if (r.vehicleId !== vehicle.id || !r.estimatedCost) continue
+    const cycle = reminderCycle(r, kmMonth)
+    if (cycle) planned += r.estimatedCost / (cycle.months * kmMonth)
+  }
+  const driven = currentOdometer(vehicle, transactions) - vehicle.initialOdometer
+  const done = transactions
+    .filter((t) => t.vehicleId === vehicle.id && t.subcategoryId && MAINTENANCE_SUBS.has(t.subcategoryId))
+    .reduce((a, t) => a + t.amount, 0)
+  const maintenance = planned > 0 ? planned : driven >= 500 && done > 0 ? done / driven : null
+  const maintenanceSource = planned > 0 ? 'planejada' : maintenance !== null ? 'realizada' : null
+
+  // Fixos do veículo por mês (anuais ÷ 12) + depreciação, espalhados pelos km do mês.
+  const fixedMonthly =
+    recurring
+      .filter((rc) => rc.vehicleId === vehicle.id && rc.active && rc.type === 'despesa')
+      .reduce((a, rc) => a + (rc.frequency === 'anual' ? rc.amount / 12 : rc.amount), 0) +
+    (vehicle.marketValue ? (vehicle.marketValue * (vehicle.depreciationRate ?? DEFAULT_DEPRECIATION_RATE)) / 100 / 12 : 0)
+  const fixed = fixedMonthly > 0 ? fixedMonthly / kmMonth : null
+
+  const running = fuel !== null || maintenance !== null ? (fuel ?? 0) + (maintenance ?? 0) : null
+  const total = running !== null || fixed !== null ? (running ?? 0) + (fixed ?? 0) : null
+  return { fuel, maintenance, maintenanceSource, fixed, running, total, kmPerMonth: kmMonth }
+}
+
+/** "R$ 0,73" mesmo para frações de centavo bem pequenas. */
+export const formatPerKm = (cents: number) =>
+  (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: cents < 10 ? 3 : 2 })
 
 /** Intervalos comuns de manual; o usuário ajusta ao cadastrar. */
 /** `cost` em reais: média de oficina independente, só como ponto de partida. */
