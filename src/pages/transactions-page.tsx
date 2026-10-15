@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, Check, Inbox, Layers, Pencil, Plus, Repeat, Search, Trash2, X } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Check, Inbox, Layers, Pencil, Plus, Repeat, Search, Trash2, X, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MonthSelector } from '@/components/dashboard/month-selector'
@@ -23,6 +23,7 @@ import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
 import { PAYMENT_METHOD_LABELS, type TransactionStatus, type TransactionType } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
+import { SharedBillsCard } from '@/components/shared/shared-ui'
 
 const statusTone: Record<TransactionStatus, Tone> = { pago: 'income', pendente: 'info', atrasado: 'expense' }
 
@@ -154,6 +155,8 @@ export function TransactionsPage() {
 
         <RecurringList type={tab} />
 
+        {tab === 'despesa' && <SharedBillsCard />}
+
         {filtered && rows.length > 0 && (
           <p className="-mb-2 text-sm text-muted-foreground">
             {rows.length} {rows.length === 1 ? 'resultado' : 'resultados'} · {formatMoney(visibleTotal)}
@@ -211,6 +214,15 @@ export function TransactionsPage() {
                           {t.paymentMethod && <> · {PAYMENT_METHOD_LABELS[t.paymentMethod]}</>}
                           {t.payTo && <> · para {t.payTo}</>}
                         </p>
+                        {t.sharedBillId && (
+                          <span className="mt-1 flex flex-wrap gap-1.5">
+                            <Badge tone="info">
+                              <Users className="size-3" />
+                              Compartilhado{t.sharedWith ? ` · ${t.sharedWith}` : ''}
+                            </Badge>
+                            {t.sharedSuspended && <Badge tone="warning">Em espera: conta alterada</Badge>}
+                          </span>
+                        )}
                         {/* Celular: valor e status descem para dar espaço à descrição. */}
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">{amountAndStatus}</div>
                       </div>

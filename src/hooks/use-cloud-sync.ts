@@ -13,7 +13,9 @@ import {
 import { getFirebase, isFirebaseConfigured } from '@/lib/firebase'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { initialFinanceData, useFinanceStore } from '@/store/finance-store'
+import { subscribeHandle, subscribeSharedBills } from '@/lib/shared-cloud'
 import { initialRecovery, recoveryData, useRecoveryStore } from '@/store/recovery-store'
+import { resetShared, useSharedStore } from '@/store/shared-store'
 import { defaultSettings, useSettingsStore } from '@/store/settings-store'
 
 /**
@@ -80,6 +82,14 @@ function startSync(uid: string): Unsubscribe {
       useRecoveryStore.setState({ ...initialRecovery, ...remote })
     }, reportSyncError),
   ]
+  unsubs.push(
+    subscribeHandle(uid, (handle) => useSharedStore.setState({ handle, handleLoaded: true }), reportSyncError),
+    subscribeSharedBills(uid, (bills) => useSharedStore.setState({ bills, rulesMissing: false }), (e) => {
+      // Sem as regras novas publicadas, só a parte compartilhada para: aviso discreto, não erro geral.
+      if ((e as { code?: string })?.code === 'permission-denied') useSharedStore.setState({ rulesMissing: true })
+      else reportSyncError(e)
+    }),
+  )
   return () => unsubs.forEach((u) => u())
 }
 
@@ -101,6 +111,7 @@ export function useCloudSync() {
         useFinanceStore.setState(initialFinanceData())
         useSettingsStore.setState((s) => ({ settings: { ...defaultSettings, theme: s.settings.theme } }))
         useRecoveryStore.setState(initialRecovery)
+        resetShared()
         setAuth({ status: 'signed_out', user: null, dataLoaded: false, recurringLoaded: false, syncError: null })
         return
       }

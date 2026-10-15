@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, type ComponentType } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
 import { AuthGate, LocalModeBanner, SyncErrorBanner } from '@/components/layout/auth-gate'
+import { SharedBanners } from '@/components/shared/shared-ui'
 import { EditTransactionDialog } from '@/components/transactions/edit-transaction-dialog'
 import { TransactionDialog } from '@/components/transactions/transaction-dialog'
 import { Skeleton } from '@/components/ui/misc'
 import { useCloudSync } from '@/hooks/use-cloud-sync'
 import { useRecurringMaterializer } from '@/hooks/use-recurring'
+import { useSharedReconciler } from '@/hooks/use-shared'
 import { useThemeSync } from '@/hooks/use-theme'
 import { useUIStore, type View } from '@/store/ui-store'
 
@@ -63,6 +65,7 @@ export default function App() {
   useThemeSync()
   useCloudSync()
   useRecurringMaterializer()
+  useSharedReconciler()
   usePrefetchPages()
   const view = useUIStore((s) => s.view)
   const Page = PAGES[view]
@@ -72,6 +75,7 @@ export default function App() {
       <AppShell>
         <LocalModeBanner />
         <SyncErrorBanner />
+        <SharedBanners />
         <Suspense fallback={<PageFallback />}>
           <Page />
         </Suspense>

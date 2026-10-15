@@ -1,9 +1,77 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
     // Cada usuário só lê e escreve dentro de users/{seu uid}.
     match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    // @ único: qualquer usuário logado consulta um @ exato (para convidar),
+    // mas ninguém lista todos. Só cria se não existir (create falha se já
+    // houver documento) e só o dono apaga o próprio @.
+    match /handles/{handle} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && handle.matches('^[a-z0-9_.]{3,20}$')
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'name']);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Contas compartilhadas: só criador e convidado leem.
+    match /sharedBills/{billId} {
+      function isCreator() {
+        return signedIn() && resource.data.createdBy == request.auth.uid;
+      }
+      function isInvitee() {
+        return signedIn() && resource.data.invitedUid == request.auth.uid;
+      }
+      // Convidado não pode mudar valores nem percentuais: só o próprio status.
+      function sameShares() {
+        let a = resource.data.participants;
+        let b = request.resource.data.participants;
+        return b.size() == 2
+          && b[0].userId == a[0].userId && b[0].splitPercentage == a[0].splitPercentage
+          && b[0].calculatedAmount == a[0].calculatedAmount && b[0].status == a[0].status
+          && b[1].userId == a[1].userId && b[1].splitPercentage == a[1].splitPercentage
+          && b[1].calculatedAmount == a[1].calculatedAmount;
+      }
+
+      allow read: if isCreator() || isInvitee();
+
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.invitedUid != request.auth.uid
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.version == 1
+        && request.resource.data.totalAmount > 0
+        && request.resource.data.installments >= 1 && request.resource.data.installments <= 120
+        && request.resource.data.participants.size() == 2
+        && request.resource.data.participants[0].userId == request.auth.uid
+        && request.resource.data.participants[1].userId == request.resource.data.invitedUid;
+
+      // Criador edita, cancela ou fecha o aviso de recusa; não troca o convidado
+      // nem marca a conta como aceita no lugar dele.
+      allow update: if (isCreator()
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.invitedUid == resource.data.invitedUid
+          && request.resource.data.status in ['PENDING', 'CANCELLED', resource.data.status]
+          && request.resource.data.version >= resource.data.version)
+        // Convidado só responde a um convite pendente.
+        || (isInvitee()
+          && resource.data.status == 'PENDING'
+          && request.resource.data.status in ['ACCEPTED', 'REJECTED']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'participants', 'respondedAt', 'updatedAt'])
+          && sameShares()
+          && request.resource.data.participants[1].status == request.resource.data.status);
+
+      allow delete: if false;
     }
   }
 }

@@ -13,6 +13,10 @@ import { formatMoney, splitCents, toCents } from '@/lib/money'
 import { MAX_INSTALLMENTS, parseMoneyInput, transactionFormSchema, type TransactionFormValues } from '@/lib/schemas'
 import { cn, createId } from '@/lib/utils'
 import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
+import { normalizeHandle } from '@/lib/shared'
+import { createSharedBill, lookupHandle } from '@/lib/shared-cloud'
+import { useAuthStore } from '@/store/auth-store'
+import { useSharedStore } from '@/store/shared-store'
 import { useFinanceStore } from '@/store/finance-store'
 import {
   PAYMENT_METHOD_LABELS,
@@ -149,7 +153,44 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     }
   }, [isInstallment, ongoing, amount, installments, currentInstallment, dueDate])
 
-  const onSubmit = (v: TransactionFormValues) => {
+  // Dividir esta conta com outro usuário (pelo @). Só com login e @ escolhido.
+  const authUser = useAuthStore((s) => (s.status === 'signed_in' ? s.user : null))
+  const myHandle = useSharedStore((s) => s.handle)
+  const [share, setShare] = useState({ on: false, handle: '', percent: '50', payerType: 'SPLIT_PAYMENT' as 'SPLIT_PAYMENT' | 'SINGLE_PAYER', error: '' })
+  const canShare = !!authUser && type === 'despesa' && !isRecurring && !ongoing
+  const sharing = canShare && share.on
+
+  const submitShared = async (v: TransactionFormValues) => {
+    if (!authUser || !myHandle) return setShare((x) => ({ ...x, error: 'Escolha seu @ em Lançamentos > Contas compartilhadas antes de dividir.' }))
+    const handle = normalizeHandle(share.handle)
+    const percent = Number(share.percent)
+    if (!handle) return setShare((x) => ({ ...x, error: 'Informe o @ da pessoa' }))
+    if (!(percent >= 1 && percent <= 99)) return setShare((x) => ({ ...x, error: 'A parte da pessoa vai de 1% a 99%' }))
+    if (handle === myHandle) return setShare((x) => ({ ...x, error: 'Esse é o seu @' }))
+    try {
+      const partner = await lookupHandle(handle)
+      if (!partner) return setShare((x) => ({ ...x, error: `Nenhum usuário com @${handle}` }))
+      await createSharedBill({
+        title: v.description,
+        totalAmount: toCents(v.amount),
+        installments: v.isInstallment ? v.installments : 1,
+        firstDueDate: v.dueDate as ISODate,
+        categoryId: v.categoryId,
+        payerType: share.payerType,
+        inviteePercent: percent,
+        creator: { uid: authUser.uid, handle: myHandle, name: authUser.name },
+        invitee: { uid: partner.uid, handle, name: partner.name },
+      })
+      onSuccess?.(`Convite enviado para @${handle}. As parcelas entram quando a pessoa aceitar.`)
+      reset(defaultValues(v.type))
+      setShare({ on: false, handle: '', percent: '50', payerType: 'SPLIT_PAYMENT', error: '' })
+    } catch {
+      setShare((x) => ({ ...x, error: 'Não foi possível enviar o convite. Verifique a conexão e tente de novo.' }))
+    }
+  }
+
+  const onSubmit = async (v: TransactionFormValues) => {
+    if (sharing) return submitShared(v)
     const due = v.dueDate as ISODate
     const totalCents = toCents(v.amount)
     const payTo = v.type === 'despesa' && v.payTo ? v.payTo : null
@@ -704,6 +745,80 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           </div>
         )}
 
+        {canShare && (
+          <div className="flex flex-col gap-3 rounded-xl border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="share">Dividir esta conta</Label>
+              <Switch id="share" checked={share.on} onCheckedChange={(on) => setShare((x) => ({ ...x, on, error: '' }))} />
+            </div>
+            {share.on && (
+              <>
+                <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="share-handle">@ da pessoa</Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">@</span>
+                      <Input
+                        id="share-handle"
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        className="pl-8"
+                        value={share.handle}
+                        onChange={(e) => setShare((x) => ({ ...x, handle: e.target.value, error: '' }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="share-pct">Parte dela</Label>
+                    <div className="relative">
+                      <Input
+                        id="share-pct"
+                        inputMode="numeric"
+                        className="pr-8"
+                        value={share.percent}
+                        onChange={(e) => setShare((x) => ({ ...x, percent: e.target.value.replace(/\D/g, ''), error: '' }))}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Quem paga">
+                  {(
+                    [
+                      ['SPLIT_PAYMENT', 'Cada um a sua parte'],
+                      ['SINGLE_PAYER', 'Eu paguei tudo'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={share.payerType === key}
+                      onClick={() => setShare((x) => ({ ...x, payerType: key }))}
+                      className={cn('h-9 rounded-lg text-sm font-medium transition-colors', share.payerType === key ? 'bg-card shadow-sm' : 'text-muted-foreground')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {share.payerType === 'SPLIT_PAYMENT'
+                    ? 'Cada um paga a própria parte direto ao credor.'
+                    : 'Você pagou o total; a pessoa reembolsa a parte dela a você.'}{' '}
+                  A pessoa recebe um convite e as parcelas entram para os dois quando ela aceitar.
+                  {!myHandle && ' Antes, escolha seu @ em Lançamentos > Contas compartilhadas.'}
+                </p>
+                {share.error && (
+                  <p role="alert" className="text-sm text-expense">
+                    {share.error}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-2">
           <Label htmlFor="notes">Observações (opcional)</Label>
           <Input id="notes" aria-invalid={!!errors.notes} {...register('notes')} />
@@ -718,7 +833,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           </Button>
         )}
         <Button type="submit" variant={type === 'receita' ? 'income' : 'default'} className="flex-[2]" disabled={isSubmitting}>
-          {isInstallment ? 'Gerar parcelas' : 'Salvar lançamento'}
+          {sharing ? (isSubmitting ? 'Enviando…' : 'Enviar convite') : isInstallment ? 'Gerar parcelas' : 'Salvar lançamento'}
         </Button>
       </div>
     </form>

@@ -57,6 +57,8 @@ interface FinanceState extends FinanceData {
   updateRecurringCost: (rc: RecurringCost) => void
   /** Grava um lançamento inteiro (edição de abastecimento e gasto do veículo). */
   saveTransaction: (t: Transaction) => void
+  /** Parcelas geradas/suspensas/apagadas por contas compartilhadas. */
+  applySharedChanges: (upserts: Transaction[], deletes: Transaction['id'][]) => void
   togglePaid: (id: Transaction['id']) => void
   removeTransaction: (id: Transaction['id']) => void
   /**
@@ -227,6 +229,9 @@ export const useFinanceStore = create<FinanceState>()(
         },
 
         saveTransaction: (t) => commit({ upserts: txWrites([t]) }),
+
+        applySharedChanges: (upserts, deletes) =>
+          commit({ upserts: txWrites(upserts), deletes: deletes.map((id) => ({ name: 'transactions' as const, id })) }),
 
         togglePaid: (id) => {
           const t = get().transactions.find((x) => x.id === id)
