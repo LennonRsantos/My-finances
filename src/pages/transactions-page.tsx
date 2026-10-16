@@ -1,5 +1,7 @@
-import { ArrowDownRight, ArrowUpRight, Check, Inbox, Layers, Pencil, Plus, Repeat, Search, Trash2, X, Users } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ArrowDownRight, ArrowUpRight, Check, Inbox, Layers, Pencil, Plus, Repeat, Search, SlidersHorizontal, Trash2, Users, X } from 'lucide-react'
+import { format, parseISO } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
+import { Fragment, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MonthSelector } from '@/components/dashboard/month-selector'
 import { RecurringList } from '@/components/transactions/recurring-list'
@@ -14,16 +16,25 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge, EmptyState, type Tone } from '@/components/ui/misc'
-import { formatDateShort, todayISO } from '@/lib/dates'
+import { addDaysISO, formatDateShort, todayISO } from '@/lib/dates'
 import { resolveStatus, transactionsInMonth } from '@/lib/finance'
 import { categoryIconMap } from '@/lib/icons'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
-import { PAYMENT_METHOD_LABELS, type TransactionStatus, type TransactionType } from '@/types/finance'
+import { PAYMENT_METHOD_LABELS, type ISODate, type TransactionStatus, type TransactionType } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 import { SharedBillsCard } from '@/components/shared/shared-ui'
+
+/** "Hoje", "Amanhã", "Ontem" ou "sex., 25 de out." */
+function dayLabel(date: string, today: string): string {
+  if (date === today) return 'Hoje'
+  if (date === addDaysISO(today as ISODate, 1)) return 'Amanhã'
+  if (date === addDaysISO(today as ISODate, -1)) return 'Ontem'
+  const label = format(parseISO(date), "EEE, d 'de' MMM", { locale: ptBR })
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
 
 const statusTone: Record<TransactionStatus, Tone> = { pago: 'income', pendente: 'info', atrasado: 'expense' }
 
@@ -54,6 +65,7 @@ export function TransactionsPage() {
   const edit = useUIStore((s) => s.setEditingTransaction)
   const [query, setQuery] = useState('')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   // Exclusão em dois cliques: o primeiro arma, o segundo confirma.
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   // Categorias são diferentes entre despesas e receitas.
@@ -81,7 +93,10 @@ export function TransactionsPage() {
     const matches = monthRows.filter((t) => t.type === tab && (!q || t.description.toLowerCase().includes(q)))
     return applyFilters(matches, filters, today)
   }, [monthRows, tab, query, filters, today])
-  const filtered = query.trim() !== '' || activeFilterCount(filters) > 0
+  const filterCount = activeFilterCount(filters)
+  const filtered = query.trim() !== '' || filterCount > 0
+  // Ordenado por data: a lista ganha cabeçalhos de dia e a data sai de cada linha.
+  const byDay = filters.sort === 'date_desc' || filters.sort === 'date_asc'
   const visibleTotal = rows.reduce((a, t) => a + t.amount, 0)
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
@@ -145,13 +160,23 @@ export function TransactionsPage() {
               className="pl-9"
             />
           </div>
-          <Button variant={tab === 'receita' ? 'income' : 'default'} onClick={() => openForm(true, tab)}>
+          <Button
+            variant={filtersOpen || filterCount > 0 ? 'default' : 'outline'}
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-expanded={filtersOpen}
+            aria-label={filterCount ? `Filtros (${filterCount} ativos)` : 'Filtros'}
+          >
+            <SlidersHorizontal />
+            <span className="hidden sm:inline">Filtros</span>
+            {filterCount > 0 && <span className="tabular-nums">{filterCount}</span>}
+          </Button>
+          <Button variant={tab === 'receita' ? 'income' : 'default'} onClick={() => openForm(true, tab)} aria-label={tab === 'receita' ? 'Nova receita' : 'Nova despesa'}>
             <Plus />
             <span className="hidden sm:inline">{tab === 'receita' ? 'Nova receita' : 'Nova despesa'}</span>
           </Button>
         </div>
 
-        <TransactionFilters value={filters} onChange={setFilters} categories={categories} type={tab} />
+        {filtersOpen && <TransactionFilters value={filters} onChange={setFilters} categories={categories} type={tab} />}
 
         <RecurringList type={tab} />
 
@@ -172,7 +197,8 @@ export function TransactionsPage() {
             />
           ) : (
             <ul className="divide-y">
-              {rows.map((t) => {
+              {rows.map((t, i) => {
+                const dayHeader = byDay && (i === 0 || rows[i - 1]!.dueDate !== t.dueDate)
                 const cat = categoryById.get(t.categoryId)
                 const Icon = cat ? categoryIconMap[cat.icon] : Inbox
                 const status = resolveStatus(t, today)
@@ -189,7 +215,13 @@ export function TransactionsPage() {
                   </>
                 )
                 return (
-                  <li key={t.id} className="flex items-center gap-3 p-3 sm:p-4">
+                  <Fragment key={t.id}>
+                    {dayHeader && (
+                      <li className="bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground sm:px-4" aria-hidden>
+                        {dayLabel(t.dueDate, today)}
+                      </li>
+                    )}
+                  <li className="flex items-center gap-3 p-3 sm:p-4">
                     <button
                       type="button"
                       onClick={() => edit(t.id)}
@@ -210,7 +242,7 @@ export function TransactionsPage() {
                           <span className="line-clamp-2 min-w-0 break-words sm:line-clamp-1">{t.description}</span>
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {formatDateShort(t.dueDate)} · {cat?.name ?? 'Sem categoria'}
+                          {!byDay && <>{formatDateShort(t.dueDate)} · </>}{cat?.name ?? 'Sem categoria'}
                           {t.paymentMethod && <> · {PAYMENT_METHOD_LABELS[t.paymentMethod]}</>}
                           {t.payTo && <> · para {t.payTo}</>}
                         </p>
@@ -264,6 +296,7 @@ export function TransactionsPage() {
                       </Button>
                     </div>
                   </li>
+                  </Fragment>
                 )
               })}
             </ul>

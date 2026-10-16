@@ -13,6 +13,7 @@ import {
   transactionsInMonth,
 } from '@/lib/finance'
 import { todayISO } from '@/lib/dates'
+import { areaOf } from '@/lib/reports'
 
 /** Agrega todos os dados derivados do dashboard para o mês selecionado. */
 export function useDashboardData() {
@@ -24,10 +25,18 @@ export function useDashboardData() {
 
   return useMemo(() => {
     const today = todayISO()
+    const inMonth = transactionsInMonth(transactions, month)
+    const expenses = inMonth.filter((t) => t.type === 'despesa')
+    const byArea = { casa: 0, veiculo: 0, outros: 0 }
+    for (const t of expenses) byArea[areaOf(t)] += t.amount
     return {
       month,
       today,
-      hasData: transactionsInMonth(transactions, month).length > 0,
+      hasData: inMonth.length > 0,
+      /** Despesas do mês ainda não pagas */
+      toPay: expenses.filter((t) => t.status !== 'pago').reduce((a, t) => a + t.amount, 0),
+      byArea,
+      dueSoonDays: notifications.dueSoonDays,
       summary: computeMonthSummary(transactions, month, openingBalance, today),
       alerts: computeDueAlerts(transactions, today, notifications.dueSoonDays),
       categorySpending: computeCategorySpending(transactions, categories, month),

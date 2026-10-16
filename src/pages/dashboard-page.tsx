@@ -1,5 +1,6 @@
 import { CalendarX2, Plus } from 'lucide-react'
 import { BudgetProgress } from '@/components/dashboard/budget-progress'
+import { AreaStrip } from '@/components/dashboard/area-strip'
 import { CategoryDonut } from '@/components/dashboard/category-donut'
 import { DueAlerts } from '@/components/dashboard/due-alerts'
 import { MonthSelector } from '@/components/dashboard/month-selector'
@@ -42,7 +43,7 @@ export function DashboardPage() {
           <DashboardSkeleton />
         ) : (
           <>
-            <MonthStatement summary={data.summary} />
+            <MonthStatement summary={data.summary} toPay={data.toPay} />
             <PayeesCard data={data.payees} month={data.month} today={data.today} />
 
             {!data.hasData && (
@@ -60,21 +61,16 @@ export function DashboardPage() {
               </Card>
             )}
 
+            {/* Ordem: o que pede ação (contas, limites) antes do que é análise (onde foi, histórico). */}
             <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-5">
-              <div className="lg:col-span-3">
-                <CategoryDonut data={data.categorySpending} />
-              </div>
-              <div className="lg:col-span-2">
-                <DueAlerts alerts={data.alerts} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-5">
-              <div className="lg:col-span-3">
-                <MonthlyComparison data={data.monthlySeries} />
-              </div>
-              <div className="lg:col-span-2">
+              <div className="flex flex-col gap-4 lg:col-span-2">
+                <DueAlerts alerts={data.alerts} days={data.dueSoonDays} />
                 <BudgetProgress data={data.budgetUsage} />
+              </div>
+              <div className="flex flex-col gap-4 lg:col-span-3">
+                {data.hasData && <AreaStrip byArea={data.byArea} total={data.summary.monthExpenses} />}
+                <CategoryDonut data={data.categorySpending} />
+                <MonthlyComparison data={data.monthlySeries} />
               </div>
             </div>
           </>

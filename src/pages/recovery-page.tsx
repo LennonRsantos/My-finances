@@ -233,7 +233,7 @@ function buildSteps(d: Diagnosis, plan: PlanResult, debts: Debt[], payoff: Payof
     steps.push(
       plan.freed === 0
         ? {
-            title: 'Monte seu plano de cortes abaixo',
+            title: 'Monte seu plano na aba Cortes',
             detail: `Use "Sugerir plano" para ver onde cortar ${formatMoney(Math.max(0, -d.balance))} por mês. Comece pelo estilo de vida.`,
           }
         : plan.newBalance < 0
@@ -675,6 +675,7 @@ export function RecoveryPage() {
   const debtExtra = useRecoveryStore((s) => s.debtExtra)
   const openForm = useUIStore((s) => s.setTransactionDialogOpen)
   const today = todayISO()
+  const [tab, setTab] = useState<'diagnostico' | 'cortes' | 'dividas'>('diagnostico')
 
   const diagnosis = useMemo(() => computeDiagnosis(transactions, categories, currentYearMonth(), today), [transactions, categories, today])
   const health = healthOf(diagnosis)
@@ -706,13 +707,44 @@ export function RecoveryPage() {
           </Card>
         ) : (
           <>
-            <DiagnosisCard d={diagnosis} health={health} />
-            <StepsCard steps={buildSteps(diagnosis, result, debts, payoff, health)} />
-            <CutPlanCard d={diagnosis} result={result} cancellable={cancellable} />
+            {/* Três passos do plano em abas: entender, cortar, quitar. */}
+            <div role="tablist" aria-label="Partes do plano" className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">
+              {(
+                [
+                  ['diagnostico', 'Diagnóstico'],
+                  ['cortes', 'Cortes'],
+                  ['dividas', `Dívidas${debts.length ? ` (${debts.length})` : ''}`],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === key}
+                  onClick={() => setTab(key)}
+                  className={cn('h-10 rounded-lg text-sm font-medium transition-colors', tab === key ? 'bg-card shadow-sm' : 'text-muted-foreground')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === 'diagnostico' && (
+              <>
+                <DiagnosisCard d={diagnosis} health={health} />
+                <StepsCard steps={buildSteps(diagnosis, result, debts, payoff, health)} />
+              </>
+            )}
+            {tab === 'cortes' && <CutPlanCard d={diagnosis} result={result} cancellable={cancellable} />}
+            {tab === 'dividas' && (
+              <>
+                <DebtsCard debts={debts} available={result.newBalance} />
+                <EndingInstallmentsCard items={ending} />
+              </>
+            )}
           </>
         )}
-        <DebtsCard debts={debts} available={result.newBalance} />
-        <EndingInstallmentsCard items={ending} />
+        {health === 'sem_dados' && <DebtsCard debts={debts} available={result.newBalance} />}
       </main>
     </>
   )

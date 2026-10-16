@@ -1,4 +1,6 @@
 import { Target } from 'lucide-react'
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, Progress } from '@/components/ui/misc'
 import { categoryIconMap } from '@/lib/icons'
@@ -14,18 +16,28 @@ function barColor(ratio: number) {
 }
 
 export function BudgetProgress({ data }: { data: BudgetUsage[] }) {
+  const [showAll, setShowAll] = useState(false)
+  // Por padrão só o que pede atenção: estourou ou passou de 80%.
+  const attention = data.filter((d) => d.ratio >= 0.8)
+  const list = showAll ? data : attention
+  const summary =
+    data.length === 0
+      ? 'Gasto do mês contra o limite de cada categoria'
+      : attention.length
+        ? `${attention.length} de ${data.length} ${attention.length === 1 ? 'pede' : 'pedem'} atenção`
+        : `Os ${data.length} limites estão em dia`
   return (
     <Card>
       <CardHeader>
         <CardTitle>Limites por categoria</CardTitle>
-        <CardDescription>Gasto do mês vs orçamento planejado</CardDescription>
+        <CardDescription>{summary}</CardDescription>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (
-          <EmptyState icon={Target} title="Nenhum limite definido" description="Defina limites mensais nas configurações de categoria." />
+          <EmptyState icon={Target} title="Nenhum limite definido" description="Defina limites mensais em Configurações > Categorias." />
         ) : (
           <ul className="flex flex-col gap-4">
-            {data.map(({ category, spent, budget, ratio }) => {
+            {list.map(({ category, spent, budget, ratio }) => {
               const Icon = categoryIconMap[category.icon]
               const over = ratio > 1
               return (
@@ -51,6 +63,11 @@ export function BudgetProgress({ data }: { data: BudgetUsage[] }) {
               )
             })}
           </ul>
+        )}
+        {data.length > attention.length && (
+          <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Mostrar só os que pedem atenção' : `Ver todos os limites (${data.length})`}
+          </Button>
         )}
       </CardContent>
     </Card>

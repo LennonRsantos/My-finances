@@ -41,36 +41,51 @@ function BigMoney({ value }: { value: number }) {
 
 function Figure({ label, value, tone, sign, className }: { label: string; value: number; tone?: Tone; sign?: '+' | '−'; className?: string }) {
   return (
-    <div className={cn('flex flex-col gap-1 px-4 py-3.5 sm:px-5', className)}>
+    <div className={cn('flex min-w-0 flex-col gap-1 px-3 py-3.5 sm:px-5', className)}>
       <dt className="text-[13px] text-muted-foreground">{label}</dt>
-      <dd className={cn('text-[17px] font-semibold tabular-nums tracking-[-0.01em]', tone && text[tone], value < 0 && 'text-expense')}>
-        {sign && value !== 0 && <span aria-hidden>{sign} </span>}
+      <dd className={cn('whitespace-nowrap text-[15px] font-semibold tabular-nums tracking-[-0.01em] sm:text-[17px]', tone && text[tone], value < 0 && 'text-expense')}>
+        {/* No celular o sinal sai: a cor já diz se entra ou sai e o valor cabe numa linha. */}
+        {sign && value !== 0 && <span className="hidden sm:inline" aria-hidden>{sign} </span>}
         {formatMoney(value)}
       </dd>
     </div>
   )
 }
 
-/** Resumo do mês como um extrato: saldo em destaque e o movimento logo abaixo. */
-export function MonthStatement({ summary }: { summary: MonthSummary }) {
-  const { tone, hint } = healthMeta[summary.health]
+/** O status olha o fim do mês (não o saldo de hoje); o texto diz isso com o valor. */
+function statusText(summary: MonthSummary): string {
+  const end = formatMoney(summary.projectedEndBalance)
+  if (summary.health === 'no_vermelho') return `O mês deve fechar negativo em ${formatMoney(Math.abs(summary.projectedEndBalance))}.`
+  if (summary.health === 'em_risco') return `O mês deve fechar em ${end}, mas há contas atrasadas ou gastos acima de 90% da renda.`
+  return `O mês deve fechar com ${end}.`
+}
+
+/** Resumo do mês: saldo de hoje e previsão do fim do mês lado a lado, movimento embaixo. */
+export function MonthStatement({ summary, toPay }: { summary: MonthSummary; toPay: number }) {
+  const { tone } = healthMeta[summary.health]
   return (
     <section aria-label="Resumo do mês" className="rounded-xl border bg-card">
-      <div className="flex flex-col gap-4 p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">Saldo atual</h2>
-          <span className={cn('inline-flex items-center gap-2 text-sm font-medium', text[tone])}>
-            <span className={cn('size-2 rounded-full', dot[tone])} aria-hidden />
-            {HEALTH_LABELS[summary.health]}
-          </span>
+      <div className="grid gap-5 p-4 sm:grid-cols-2 sm:p-5">
+        <div className="flex flex-col gap-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Saldo hoje</h2>
+          <BigMoney value={summary.currentBalance} />
         </div>
-        <BigMoney value={summary.currentBalance} />
-        <p className="text-sm text-muted-foreground">{hint}</p>
+        <div className="flex flex-col gap-3 sm:border-l sm:pl-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Previsto no fim do mês</h2>
+            <span className={cn('inline-flex items-center gap-2 text-sm font-medium', text[tone])}>
+              <span className={cn('size-2 rounded-full', dot[tone])} aria-hidden />
+              {HEALTH_LABELS[summary.health]}
+            </span>
+          </div>
+          <BigMoney value={summary.projectedEndBalance} />
+          <p className="text-sm text-muted-foreground">{statusText(summary)}</p>
+        </div>
       </div>
-      <dl className="grid grid-cols-2 border-t sm:grid-cols-3 [&>div+div]:border-l [&>div:nth-child(3)]:col-span-2 [&>div:nth-child(3)]:border-l-0 [&>div:nth-child(3)]:border-t sm:[&>div:nth-child(3)]:col-span-1 sm:[&>div:nth-child(3)]:border-l sm:[&>div:nth-child(3)]:border-t-0">
-        <Figure label="Receitas do mês" value={summary.monthIncome} tone="income" sign="+" />
-        <Figure label="Despesas do mês" value={summary.monthExpenses} tone="expense" sign="−" />
-        <Figure label="Previsto no fim do mês" value={summary.projectedEndBalance} />
+      <dl className="grid grid-cols-3 border-t [&>div+div]:border-l">
+        <Figure label="Receitas" value={summary.monthIncome} tone="income" sign="+" />
+        <Figure label="Despesas" value={summary.monthExpenses} tone="expense" sign="−" />
+        <Figure label="Falta pagar" value={toPay} tone={toPay > 0 ? 'warning' : undefined} />
       </dl>
     </section>
   )

@@ -1,91 +1,78 @@
-import { CalendarCheck, CalendarClock, CircleAlert, Clock } from 'lucide-react'
-import { useState } from 'react'
+import { CalendarCheck, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { EmptyState, type Tone } from '@/components/ui/misc'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/misc'
 import { formatDateShort } from '@/lib/dates'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
+import { useUIStore } from '@/store/ui-store'
 import type { DueAlerts as DueAlertsData, Transaction } from '@/types/finance'
 
-type Bucket = keyof DueAlertsData
+const LIMIT = 5
 
-const buckets: { key: Bucket; label: string; tone: Tone; icon: typeof Clock }[] = [
-  { key: 'overdue', label: 'Atrasadas', tone: 'expense', icon: CircleAlert },
-  { key: 'dueToday', label: 'Hoje', tone: 'warning', icon: Clock },
-  { key: 'dueSoon', label: '7 dias', tone: 'info', icon: CalendarClock },
-]
+type When = 'atrasada' | 'hoje' | 'em breve'
 
-const activeTone: Record<Tone, string> = {
-  expense: 'border-expense/40 bg-expense-soft text-expense',
-  warning: 'border-warning/40 bg-warning-soft text-warning',
-  info: 'border-info/40 bg-info-soft text-info',
-  income: '',
-  neutral: '',
-}
-
-export function DueAlerts({ alerts }: { alerts: DueAlertsData }) {
-  const firstWithItems = buckets.find((b) => alerts[b.key].length > 0)?.key ?? 'overdue'
-  const [active, setActive] = useState<Bucket>(firstWithItems)
+/**
+ * Próximas contas numa lista só, na ordem em que precisam de atenção:
+ * atrasadas, de hoje e as dos próximos dias. O resto fica no Calendário.
+ */
+export function DueAlerts({ alerts, days }: { alerts: DueAlertsData; days: number }) {
   const togglePaid = useFinanceStore((s) => s.togglePaid)
-  const items = alerts[active]
-  const current = buckets.find((b) => b.key === active)!
+  const setView = useUIStore((s) => s.setView)
+  const rows: { t: Transaction; when: When }[] = [
+    ...alerts.overdue.map((t) => ({ t, when: 'atrasada' as const })),
+    ...alerts.dueToday.map((t) => ({ t, when: 'hoje' as const })),
+    ...alerts.dueSoon.map((t) => ({ t, when: 'em breve' as const })),
+  ]
+  const shown = rows.slice(0, LIMIT)
+  const total = rows.reduce((a, r) => a + r.t.amount, 0)
+  const whenText = (t: Transaction, when: When) =>
+    when === 'atrasada' ? `Atrasada desde ${formatDateShort(t.dueDate)}` : when === 'hoje' ? 'Vence hoje' : `Vence ${formatDateShort(t.dueDate)}`
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Alertas de vencimento</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div role="tablist" className="grid grid-cols-3 gap-2">
-          {buckets.map(({ key, label, tone, icon: Icon }) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={active === key}
-              onClick={() => setActive(key)}
-              className={cn(
-                'flex min-h-16 flex-col items-start justify-between rounded-lg border p-2.5 text-left transition-colors',
-                active === key ? activeTone[tone] : 'hover:bg-muted',
-              )}
-            >
-              <span className="flex items-center gap-1.5 text-xs font-medium">
-                <Icon className="size-3.5" />
-                {label}
-              </span>
-              <span className="text-lg font-semibold tabular-nums text-foreground">{alerts[key].length}</span>
-            </button>
-          ))}
+      <CardHeader className="flex-row items-start justify-between gap-2">
+        <div className="flex flex-col gap-1">
+          <CardTitle>Próximas contas</CardTitle>
+          <CardDescription>
+            {rows.length
+              ? `${rows.length} ${rows.length === 1 ? 'conta' : 'contas'} até ${days} dias: ${formatMoney(total)}`
+              : `Nada vencendo nos próximos ${days} dias`}
+          </CardDescription>
         </div>
-
-        {items.length === 0 ? (
-          <EmptyState icon={CalendarCheck} title="Nada por aqui" description={`Nenhuma conta em "${current.label}".`} className="py-6" />
+        <Button size="sm" variant="ghost" onClick={() => setView('calendario')}>
+          Calendário
+          <ChevronRight />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <EmptyState icon={CalendarCheck} title="Tudo em dia" className="py-6" />
         ) : (
-          <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
-            {items.map((t) => (
-              <AlertRow key={t.id} transaction={t} tone={current.tone} onPay={() => togglePaid(t.id)} />
+          <ul className="flex flex-col divide-y">
+            {shown.map(({ t, when }) => (
+              <li key={t.id} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{t.description}</p>
+                  <p className={cn('text-xs', when === 'atrasada' ? 'text-expense' : when === 'hoje' ? 'text-warning' : 'text-muted-foreground')}>
+                    {whenText(t, when)}
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold tabular-nums">{formatMoney(t.amount)}</span>
+                <Button size="sm" variant="outline" onClick={() => togglePaid(t.id)} aria-label={`Marcar ${t.description} como pago`}>
+                  Pagar
+                </Button>
+              </li>
             ))}
           </ul>
         )}
+        {rows.length > LIMIT && (
+          <Button variant="ghost" size="sm" className="mt-1 w-full" onClick={() => setView('calendario')}>
+            Mais {rows.length - LIMIT} no Calendário
+          </Button>
+        )}
       </CardContent>
     </Card>
-  )
-}
-
-function AlertRow({ transaction: t, tone, onPay }: { transaction: Transaction; tone: Tone; onPay: () => void }) {
-  return (
-    <li className="flex items-center gap-3 py-2.5">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{t.description}</p>
-        <p className={cn('text-xs', tone === 'expense' ? 'text-expense' : 'text-muted-foreground')}>
-          Vence {formatDateShort(t.dueDate)}
-        </p>
-      </div>
-      <span className="text-sm font-semibold">{formatMoney(t.amount)}</span>
-      <Button size="sm" variant="outline" onClick={onPay} aria-label={`Marcar ${t.description} como pago`}>
-        Pagar
-      </Button>
-    </li>
   )
 }
