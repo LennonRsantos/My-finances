@@ -242,12 +242,20 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
   )
 }
 
-/** Card em Lançamentos: contas compartilhadas que criei e que recebi. */
-export function SharedBillsCard() {
+/** Card de contas compartilhadas que criei e que recebi (todas, ou só as que passam em `filter`). */
+export function SharedBillsCard({
+  filter,
+  title = 'Contas compartilhadas',
+  description = 'Contas divididas com outras pessoas.',
+}: {
+  filter?: (bill: SharedBill) => boolean
+  title?: string
+  description?: string
+} = {}) {
   const uid = useAuthStore((s) => (s.status === 'signed_in' ? s.user?.uid : null))
   const bills = useSharedStore((s) => s.bills)
   const [editing, setEditing] = useState<SharedBill | null>(null)
-  const visible = bills.filter((b) => b.status !== 'CANCELLED')
+  const visible = bills.filter((b) => b.status !== 'CANCELLED' && (!filter || filter(b)))
   // Sem contas compartilhadas, o card não aparece (o @ fica em Configurações > Conta).
   if (!uid || visible.length === 0) return null
 
@@ -256,9 +264,9 @@ export function SharedBillsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Users className="size-5" />
-          Contas compartilhadas
+          {title}
         </CardTitle>
-        <CardDescription>Contas divididas com outras pessoas.</CardDescription>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
       {visible.length > 0 && (
         <CardContent>
@@ -274,8 +282,8 @@ export function SharedBillsCard() {
                       <Badge tone={statusTone[b.status]}>{statusLabel[b.status]}</Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {mine ? 'Com' : 'De'} {partner ? displayName(partner) : '—'} · {formatMoney(b.totalAmount)} em {b.installments}x · sua parte{' '}
-                      {formatMoney(myTotal(b, uid))}
+                      {mine ? 'Compartilhada com' : 'Compartilhada por'} {partner ? `@${partner.handle}` : '—'} · {formatMoney(b.totalAmount)} em{' '}
+                      {b.installments}x · sua parte {formatMoney(myTotal(b, uid))}
                     </p>
                   </div>
                   {mine && (

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ShareFields, sendShareInvite, useShare } from '@/components/shared/share-fields'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -23,7 +24,7 @@ import {
 } from '@/lib/home'
 import { createId } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
-import { PAYMENT_METHODS, type ISODate, type MaintenanceReminder, type PaymentMethod, type RecurringCost, type Transaction } from '@/types/finance'
+import { PAYMENT_METHODS, type Cents, type ISODate, type MaintenanceReminder, type PaymentMethod, type RecurringCost, type Transaction } from '@/types/finance'
 
 export type HomeDialogState =
   | { kind: 'bill'; subcategoryId?: string }
@@ -49,6 +50,39 @@ function homeExpense(fields: Pick<Transaction, 'description' | 'amount' | 'subca
     createdAt: nowISO(),
     ...rest,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Divisão com outra pessoa
+// ---------------------------------------------------------------------------
+
+/** Conta fixa dividida vira parcelas mensais: o convite cobre este tanto de meses. */
+const SHARED_FIXED_MONTHS = 12
+const fixedShareNote = `Conta fixa: o convite cobre os próximos ${SHARED_FIXED_MONTHS} meses; depois, divida de novo.`
+
+/**
+ * Campos "Dividir" dos formulários da casa. Com a divisão ligada, o gasto não
+ * é lançado direto: vira convite, e as parcelas entram para os dois quando a
+ * pessoa aceitar.
+ */
+function useHomeShare() {
+  const { share, setShare, available } = useShare()
+  const send = async (bill: { title: string; total: Cents; installments: number; due: ISODate; subcategoryId: string }) => {
+    const result = await sendShareInvite(share, {
+      title: bill.title,
+      totalAmount: bill.total,
+      installments: bill.installments,
+      firstDueDate: bill.due,
+      categoryId: HOME_CATEGORY_ID,
+      subcategoryId: bill.subcategoryId,
+    })
+    if ('error' in result) {
+      setShare({ ...share, error: result.error })
+      return false
+    }
+    return true
+  }
+  return { share, setShare, available, on: available && share.on, send }
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +112,7 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
     })
     .map((sc) => ({ value: sc.id, label: sc.name }))
   const initialLabel = options.find((o) => o.value === initial)?.label ?? ''
+  const sharing = useHomeShare()
 
   const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(billSchema),
@@ -98,8 +133,19 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const due = v.date as ISODate
+        if (sharing.on) {
+          const ok = await sharing.send({
+            title: v.description,
+            total: cents(v.amount) * (v.repeat ? SHARED_FIXED_MONTHS : 1),
+            installments: v.repeat ? SHARED_FIXED_MONTHS : 1,
+            due,
+            subcategoryId: v.subcategoryId,
+          })
+          if (ok) onDone()
+          return
+        }
         if (v.repeat) {
           const rc: RecurringCost = {
             id: createId(),
@@ -172,16 +218,19 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
           </span>
           <Switch checked={repeat} onCheckedChange={(v) => setValue('repeat', v)} aria-label="Repetir todo mês" />
         </label>
-        <label className="flex items-center justify-between gap-3">
-          <span className="text-sm font-medium">{repeat ? 'Este mês já está pago' : 'Já pago'}</span>
-          <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label="Já pago" />
-        </label>
+        {!sharing.on && (
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">{repeat ? 'Este mês já está pago' : 'Já pago'}</span>
+            <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label="Já pago" />
+          </label>
+        )}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
+        {sharing.available && <ShareFields share={sharing.share} onChange={sharing.setShare} note={repeat ? fixedShareNote : undefined} />}
       </div>
-      <FormActions submitLabel={repeat ? 'Salvar conta fixa' : 'Salvar conta'} />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : repeat ? 'Salvar conta fixa' : 'Salvar conta'} />
     </form>
   )
 }
@@ -291,19 +340,33 @@ const completeSchema = z.object({ date, amount: optionalMoney, paymentMethod: z.
 
 function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone: () => void }) {
   const complete = useFinanceStore((s) => s.completeReminder)
+  const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(completeSchema),
     defaultValues: { date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod },
   })
-  const paymentMethod = useWatch({ control, name: 'paymentMethod' })
+  const [paymentMethod, amount] = useWatch({ control, name: ['paymentMethod', 'amount'] })
   const e = formState.errors
 
   return (
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const value = v.amount ? cents(v.amount) : 0
+        if (sharing.on && value > 0) {
+          const ok = await sharing.send({
+            title: reminder.name,
+            total: value,
+            installments: 1,
+            due: v.date as ISODate,
+            subcategoryId: HOME_MAINTENANCE_SUBCATEGORY_ID,
+          })
+          if (!ok) return
+          complete(reminder.id, null, v.date as ISODate, undefined)
+          onDone()
+          return
+        }
         complete(
           reminder.id,
           null,
@@ -338,8 +401,9 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
+        {sharing.available && <ShareFields share={sharing.share} onChange={sharing.setShare} label="Dividir o custo" />}
       </div>
-      <FormActions submitLabel="Marcar como feito" />
+      <FormActions submitLabel={sharing.on && cents(amount) > 0 ? 'Feito e enviar convite' : 'Marcar como feito'} />
     </form>
   )
 }
@@ -380,6 +444,7 @@ const rentSchema = z.object({ amount: money('Informe o valor do aluguel'), date,
 
 function RentForm({ onDone }: { onDone: () => void }) {
   const addRecurringCost = useFinanceStore((s) => s.addRecurringCost)
+  const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(rentSchema),
     defaultValues: { amount: '', date: todayISO(), paid: false, paymentMethod: 'pix' as PaymentMethod },
@@ -390,7 +455,18 @@ function RentForm({ onDone }: { onDone: () => void }) {
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
+        if (sharing.on) {
+          const ok = await sharing.send({
+            title: 'Aluguel',
+            total: cents(v.amount) * SHARED_FIXED_MONTHS,
+            installments: SHARED_FIXED_MONTHS,
+            due: v.date as ISODate,
+            subcategoryId: RENT_SUBCATEGORY_ID,
+          })
+          if (ok) onDone()
+          return
+        }
         addRecurringCost(
           homeRecurring(
             { description: 'Aluguel', amount: cents(v.amount), subcategoryId: RENT_SUBCATEGORY_ID, due: v.date as ISODate, paymentMethod: v.paymentMethod },
@@ -413,16 +489,19 @@ function RentForm({ onDone }: { onDone: () => void }) {
           </Field>
         </div>
         <p className="-mt-3 text-xs text-muted-foreground">Repete todo mês. Condomínio, se houver, cadastre em Conta &gt; Condomínio.</p>
-        <label className="flex items-center justify-between gap-3">
-          <span className="text-sm font-medium">Este mês já está pago</span>
-          <Switch checked={paid} onCheckedChange={(x) => setValue('paid', x)} aria-label="Este mês já está pago" />
-        </label>
+        {!sharing.on && (
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Este mês já está pago</span>
+            <Switch checked={paid} onCheckedChange={(x) => setValue('paid', x)} aria-label="Este mês já está pago" />
+          </label>
+        )}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
         </div>
+        {sharing.available && <ShareFields share={sharing.share} onChange={sharing.setShare} label="Dividir o aluguel" note={fixedShareNote} />}
       </div>
-      <FormActions submitLabel="Salvar aluguel" />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : 'Salvar aluguel'} />
     </form>
   )
 }
@@ -442,6 +521,7 @@ const financingSchema = z
 
 function FinancingForm({ onDone }: { onDone: () => void }) {
   const add = useFinanceStore((s) => s.addInstallmentPurchase)
+  const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(financingSchema),
     defaultValues: { bank: '', amount: '', current: '1', total: '', date: todayISO(), paymentMethod: 'boleto' as PaymentMethod },
@@ -453,8 +533,20 @@ function FinancingForm({ onDone }: { onDone: () => void }) {
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const parcela = cents(v.amount)
+        if (sharing.on) {
+          // Dividido: o convite cobre só as parcelas que faltam.
+          const ok = await sharing.send({
+            title: 'Financiamento do imóvel',
+            total: parcela * (Number(v.total) - Number(v.current) + 1),
+            installments: Number(v.total) - Number(v.current) + 1,
+            due: v.date as ISODate,
+            subcategoryId: FINANCING_SUBCATEGORY_ID,
+          })
+          if (ok) onDone()
+          return
+        }
         add({
           description: 'Financiamento do imóvel',
           totalAmount: parcela * Number(v.total),
@@ -499,8 +591,9 @@ function FinancingForm({ onDone }: { onDone: () => void }) {
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
         </div>
+        {sharing.available && <ShareFields share={sharing.share} onChange={sharing.setShare} label="Dividir as parcelas" />}
       </div>
-      <FormActions submitLabel="Salvar financiamento" />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : 'Salvar financiamento'} />
     </form>
   )
 }
@@ -522,6 +615,7 @@ function IptuForm({ onDone }: { onDone: () => void }) {
   const { addRecurringCost, addInstallmentPurchase } = useFinanceStore(
     useShallow((s) => ({ addRecurringCost: s.addRecurringCost, addInstallmentPurchase: s.addInstallmentPurchase })),
   )
+  const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(iptuSchema),
     defaultValues: { amount: '', mode: 'avista' as 'avista' | 'parcelado', quotas: '10', date: todayISO(), paymentMethod: 'boleto' as PaymentMethod },
@@ -533,8 +627,20 @@ function IptuForm({ onDone }: { onDone: () => void }) {
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const due = v.date as ISODate
+        if (sharing.on) {
+          const quotas = v.mode === 'avista' ? 1 : Number(v.quotas)
+          const ok = await sharing.send({
+            title: `IPTU ${due.slice(0, 4)}`,
+            total: cents(v.amount),
+            installments: quotas,
+            due,
+            subcategoryId: IPTU_SUBCATEGORY_ID,
+          })
+          if (ok) onDone()
+          return
+        }
         if (v.mode === 'avista') {
           addRecurringCost(
             homeRecurring({ description: 'IPTU', amount: cents(v.amount), subcategoryId: IPTU_SUBCATEGORY_ID, due, paymentMethod: v.paymentMethod }, 'anual'),
@@ -584,14 +690,19 @@ function IptuForm({ onDone }: { onDone: () => void }) {
           </Field>
         )}
         <p className="-mt-3 text-xs text-muted-foreground">
-          {mode === 'avista' ? 'Repete todo ano no mesmo dia.' : 'Lança as cotas deste ano. No ano que vem, cadastre o novo carnê.'}
+          {sharing.on
+            ? 'Dividido, vale só para este ano. No ano que vem, divida o novo IPTU.'
+            : mode === 'avista'
+              ? 'Repete todo ano no mesmo dia.'
+              : 'Lança as cotas deste ano. No ano que vem, cadastre o novo carnê.'}
         </p>
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
         </div>
+        {sharing.available && <ShareFields share={sharing.share} onChange={sharing.setShare} label="Dividir o IPTU" />}
       </div>
-      <FormActions submitLabel="Salvar IPTU" />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : 'Salvar IPTU'} />
     </form>
   )
 }
@@ -616,6 +727,7 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
   const options = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
     .filter((sc): sc is NonNullable<typeof sc> => !!sc)
     .map((sc) => ({ value: sc.id, label: sc.name }))
+  const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(purchaseSchema),
     defaultValues: {
@@ -633,7 +745,18 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
+        if (sharing.on) {
+          const ok = await sharing.send({
+            title: v.description,
+            total: cents(v.amount) * (v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1),
+            installments: v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1,
+            due: v.date as ISODate,
+            subcategoryId: v.subcategoryId,
+          })
+          if (ok) onDone()
+          return
+        }
         const fields = { description: v.description, amount: cents(v.amount), subcategoryId: v.subcategoryId, paymentMethod: v.paymentMethod }
         if (v.repeat === 'nao') addTransaction(homeExpense({ ...fields, dueDate: v.date as ISODate, paid: true }))
         else addRecurringCost(homeRecurring({ ...fields, due: v.date as ISODate }, v.repeat), true)
@@ -677,8 +800,16 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
         </div>
+        {sharing.available && (
+          <ShareFields
+            share={sharing.share}
+            onChange={sharing.setShare}
+            label="Dividir a compra"
+            note={repeat === 'mensal' ? fixedShareNote : repeat === 'anual' ? 'Compra anual: o convite vale só para esta vez.' : undefined}
+          />
+        )}
       </div>
-      <FormActions submitLabel="Salvar compra" />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : 'Salvar compra'} />
     </form>
   )
 }

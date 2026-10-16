@@ -140,10 +140,28 @@ export function purchaseSummary(transactions: Transaction[], endMonth: YearMonth
 // Moradia (aluguel, financiamento, IPTU)
 // ---------------------------------------------------------------------------
 
+/** Conta da moradia dividida com outra pessoa: só a minha parte, das parcelas que faltam. */
+export interface SharedHousing {
+  billId: string
+  next: Transaction
+  remaining: number
+}
+
 export interface HousingStatus {
   rent: RecurringCost | null
   financing: { installment: Installment; remaining: number; monthly: Cents; nextDue: ISODate | null } | null
   iptu: { recurring: RecurringCost | null; installment: Installment | null }
+  /** Aluguel, financiamento e IPTU que vieram de conta compartilhada aceita */
+  shared: { rent: SharedHousing | null; financing: SharedHousing | null; iptu: SharedHousing | null }
+}
+
+function sharedHousing(transactions: Transaction[], sub: string): SharedHousing | null {
+  const pending = transactions
+    .filter((t) => t.sharedBillId && t.categoryId === HOME_CATEGORY_ID && t.subcategoryId === sub && t.status !== 'pago' && !t.sharedSuspended)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+  const next = pending[0]
+  if (!next?.sharedBillId) return null
+  return { billId: next.sharedBillId, next, remaining: pending.filter((t) => t.sharedBillId === next.sharedBillId).length }
 }
 
 /** O que já está cadastrado sobre a moradia, lido dos fixos e parcelamentos. */
@@ -163,5 +181,10 @@ export function housingStatus(recurring: RecurringCost[], installments: Installm
       ? { installment: fin, remaining: finPending.length, monthly: finPending[0]?.amount ?? fin.installmentAmount, nextDue: finPending[0]?.dueDate ?? null }
       : null,
     iptu: { recurring: activeRc(IPTU_SUBCATEGORY_ID), installment: withPending(IPTU_SUBCATEGORY_ID) },
+    shared: {
+      rent: sharedHousing(transactions, RENT_SUBCATEGORY_ID),
+      financing: sharedHousing(transactions, FINANCING_SUBCATEGORY_ID),
+      iptu: sharedHousing(transactions, IPTU_SUBCATEGORY_ID),
+    },
   }
 }
