@@ -202,6 +202,8 @@ export interface InstallmentPurchaseInput {
   /** Marca a parcela `startAt` como paga */
   firstPaid?: boolean
   notes?: string
+  /** Financiamento/empréstimo do veículo: as parcelas entram na aba Veículo */
+  vehicleId?: string | null
 }
 
 /**
@@ -251,6 +253,7 @@ export function generateInstallments(input: InstallmentPurchaseInput): {
       recurringCostId: null,
       payTo: input.payTo ?? null,
       notes: input.notes,
+      vehicleId: input.vehicleId ?? null,
       createdAt,
     }
   })

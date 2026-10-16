@@ -316,6 +316,10 @@ export interface SharedBill {
   /** Vencimento da 1ª parcela */
   firstDueDate: ISODate
   categoryId: Category['id']
+  /** Tipo do gasto (ex.: seguro, manutenção): cada um vê na categoria certa */
+  subcategoryId?: Subcategory['id'] | null
+  /** Veículo do criador; só o lado do criador liga as parcelas a ele */
+  vehicleId?: string | null
   payerType: SharedPayerType
   status: SharedBillStatus
   createdBy: string

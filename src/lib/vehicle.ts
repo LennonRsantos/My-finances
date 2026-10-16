@@ -390,6 +390,10 @@ export interface CostPerKm {
   maintenanceSource: 'planejada' | 'realizada' | null
   /** IPVA, seguro, licenciamento e depreciação, divididos pelos km do mês */
   fixed: number | null
+  /** Parcela mensal de financiamento/empréstimo do veículo, dividida pelos km do mês */
+  financing: number | null
+  /** Parcela mensal somada dos financiamentos em aberto, em centavos */
+  financingMonthly: Cents
   /** Combustível + manutenção: o que cada km rodado gasta */
   running: number | null
   /** Tudo junto, inclusive os fixos */
@@ -426,17 +430,108 @@ export function costPerKm(
   const maintenance = planned > 0 ? planned : driven >= 500 && done > 0 ? done / driven : null
   const maintenanceSource = planned > 0 ? 'planejada' : maintenance !== null ? 'realizada' : null
 
+  // Financiamento/empréstimo: parcela do mês de cada série ainda em aberto.
+  const financingMonthly = vehicleFinancingMonthly(vehicle, transactions)
+  const financing = financingMonthly > 0 ? financingMonthly / kmMonth : null
+
   // Fixos do veículo por mês (anuais ÷ 12) + depreciação, espalhados pelos km do mês.
+  // Financiamento lançado como fixo fica de fora daqui (já entra acima).
   const fixedMonthly =
     recurring
-      .filter((rc) => rc.vehicleId === vehicle.id && rc.active && rc.type === 'despesa')
+      .filter((rc) => rc.vehicleId === vehicle.id && rc.active && rc.type === 'despesa' && !isFinancing(rc))
       .reduce((a, rc) => a + (rc.frequency === 'anual' ? rc.amount / 12 : rc.amount), 0) +
     (vehicle.marketValue ? (vehicle.marketValue * (vehicle.depreciationRate ?? DEFAULT_DEPRECIATION_RATE)) / 100 / 12 : 0)
   const fixed = fixedMonthly > 0 ? fixedMonthly / kmMonth : null
 
   const running = fuel !== null || maintenance !== null ? (fuel ?? 0) + (maintenance ?? 0) : null
-  const total = running !== null || fixed !== null ? (running ?? 0) + (fixed ?? 0) : null
-  return { fuel, maintenance, maintenanceSource, fixed, running, total, kmPerMonth: kmMonth }
+  const total =
+    running !== null || fixed !== null || financing !== null ? (running ?? 0) + (fixed ?? 0) + (financing ?? 0) : null
+  return { fuel, maintenance, maintenanceSource, fixed, financing, financingMonthly, running, total, kmPerMonth: kmMonth }
+}
+
+export const VEHICLE_FINANCING_SUBCATEGORY_ID = 'sub-veiculo-financiamento'
+
+/** Financiamento ou consórcio do veículo, ou empréstimo ligado a ele. */
+export const isFinancing = (t: { subcategoryId: string | null; categoryId: string }) =>
+  t.subcategoryId === VEHICLE_FINANCING_SUBCATEGORY_ID || t.categoryId === 'cat-emprestimos'
+
+/** Chave da série: mesmo gasto fixo ou mesmo parcelamento. Lançamento avulso não tem série. */
+export const seriesKey = (t: Transaction) => t.recurringCostId ?? t.installment?.installmentId ?? null
+
+/**
+ * Quanto sai por mês de financiamento/empréstimo do veículo: soma da próxima
+ * parcela não paga de cada série (financiamentos quitados não contam).
+ */
+export function vehicleFinancingMonthly(vehicle: Vehicle, transactions: Transaction[]): Cents {
+  const next = new Map<string, Transaction>()
+  for (const t of transactions) {
+    if (t.vehicleId !== vehicle.id || t.type !== 'despesa' || t.status === 'pago' || !isFinancing(t)) continue
+    const key = seriesKey(t)
+    if (!key) continue
+    const current = next.get(key)
+    if (!current || t.dueDate < current.dueDate) next.set(key, t)
+  }
+  return [...next.values()].reduce((a, t) => a + t.amount, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Gastos repetidos agrupados
+// ---------------------------------------------------------------------------
+
+export interface ExpenseSeries {
+  key: string
+  /** Do mais antigo ao mais novo */
+  items: Transaction[]
+  title: string
+  minAmount: Cents
+  maxAmount: Cents
+  first: ISODate
+  last: ISODate
+  paid: number
+  /** Data usada para ordenar: próxima parcela em aberto ou a última */
+  sortDate: ISODate
+}
+
+export type ExpenseEntry = { kind: 'single'; item: Transaction; sortDate: ISODate } | ({ kind: 'series' } & ExpenseSeries)
+
+/**
+ * Junta lançamentos da mesma série (fixo ou parcelamento) numa linha só,
+ * "de janeiro a dezembro". Séries com um lançamento só aparecem soltas.
+ */
+export function groupExpenses(list: Transaction[]): ExpenseEntry[] {
+  const groups = new Map<string, Transaction[]>()
+  const singles: ExpenseEntry[] = []
+  for (const t of list) {
+    const key = seriesKey(t)
+    if (!key) {
+      singles.push({ kind: 'single', item: t, sortDate: t.dueDate })
+      continue
+    }
+    groups.set(key, [...(groups.get(key) ?? []), t])
+  }
+  const series: ExpenseEntry[] = []
+  for (const [key, items] of groups) {
+    if (items.length === 1) {
+      singles.push({ kind: 'single', item: items[0]!, sortDate: items[0]!.dueDate })
+      continue
+    }
+    const sorted = [...items].sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    const amounts = sorted.map((t) => t.amount)
+    const nextOpen = sorted.find((t) => t.status !== 'pago')
+    series.push({
+      kind: 'series',
+      key,
+      items: sorted,
+      title: sorted[0]!.description.replace(/\s*\(\d+\/\d+\)$/, ''),
+      minAmount: Math.min(...amounts),
+      maxAmount: Math.max(...amounts),
+      first: sorted[0]!.dueDate,
+      last: sorted.at(-1)!.dueDate,
+      paid: sorted.filter((t) => t.status === 'pago').length,
+      sortDate: (nextOpen ?? sorted.at(-1)!).dueDate,
+    })
+  }
+  return [...series, ...singles].sort((a, b) => b.sortDate.localeCompare(a.sortDate))
 }
 
 /** "R$ 0,73" mesmo para frações de centavo bem pequenas. */

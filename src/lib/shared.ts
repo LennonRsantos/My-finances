@@ -92,7 +92,7 @@ export function buildSharedTransactions(bill: SharedBill, uid: string, now: stri
       amount,
       type: 'despesa',
       categoryId: bill.categoryId,
-      subcategoryId: null,
+      subcategoryId: bill.subcategoryId ?? null,
       dueDate: addMonthsISO(bill.firstDueDate, i) as ISODate,
       paymentDate: null,
       status: 'pendente',
@@ -101,6 +101,8 @@ export function buildSharedTransactions(bill: SharedBill, uid: string, now: stri
       recurringCostId: null,
       payTo: reimbursing ? displayName(partner) : null,
       sharedBillId: bill.id,
+      // O convidado não tem o veículo do criador: a parcela dele fica só na categoria.
+      vehicleId: me.role === 'creator' ? (bill.vehicleId ?? null) : null,
       sharedWith: displayName(partner),
       sharedVersion: bill.version,
       sharedSuspended: false,

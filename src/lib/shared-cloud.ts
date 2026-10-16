@@ -80,6 +80,8 @@ export interface NewSharedBill {
   installments: number
   firstDueDate: ISODate
   categoryId: Category['id']
+  subcategoryId?: string | null
+  vehicleId?: string | null
   payerType: SharedPayerType
   /** % da conta que cabe ao convidado */
   inviteePercent: number
@@ -98,6 +100,8 @@ export async function createSharedBill(input: NewSharedBill): Promise<SharedBill
     installments: input.installments,
     firstDueDate: input.firstDueDate,
     categoryId: input.categoryId,
+    subcategoryId: input.subcategoryId ?? null,
+    vehicleId: input.vehicleId ?? null,
     payerType: input.payerType,
     status: 'PENDING',
     createdBy: input.creator.uid,

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ShareFields, sendShareInvite, useShare } from '@/components/shared/share-fields'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -24,6 +25,7 @@ import {
   reminderSaving,
   DOCUMENT_PRESETS,
   FUEL_SUBCATEGORY_ID,
+  VEHICLE_FINANCING_SUBCATEGORY_ID,
   MAINTENANCE_SUBCATEGORY_ID,
   VEHICLE_CATEGORY_ID,
   type DocumentPreset,
@@ -46,7 +48,8 @@ import {
 export type VehicleDialogState =
   | { kind: 'vehicle'; vehicle?: Vehicle }
   | { kind: 'fuel'; vehicle: Vehicle; currentKm: number; transaction?: Transaction }
-  | { kind: 'expense'; vehicle: Vehicle; currentKm: number; transaction?: Transaction }
+  | { kind: 'expense'; vehicle: Vehicle; currentKm: number; transaction?: Transaction; subcategoryId?: string }
+  | { kind: 'financing'; vehicle: Vehicle }
   | { kind: 'reminder'; vehicle: Vehicle; currentKm: number; reminder?: MaintenanceReminder }
   | { kind: 'complete'; vehicle: Vehicle; currentKm: number; reminder: MaintenanceReminder }
   | { kind: 'document'; vehicle: Vehicle; preset: DocumentPreset }
@@ -451,13 +454,25 @@ const expenseSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS),
 })
 
-function ExpenseForm({ vehicle, transaction, onDone }: { vehicle: Vehicle; transaction?: Transaction; onDone: () => void }) {
+function ExpenseForm({
+  vehicle,
+  transaction,
+  subcategoryId: initialSub,
+  onDone,
+}: {
+  vehicle: Vehicle
+  transaction?: Transaction
+  subcategoryId?: string
+  onDone: () => void
+}) {
   const add = useFinanceStore((s) => s.addVehicleExpense)
   const save = useFinanceStore((s) => s.saveTransaction)
   const subcategories = useFinanceStore((s) => s.subcategories)
   const options = subcategories
-    .filter((sc) => sc.categoryId === VEHICLE_CATEGORY_ID && sc.id !== FUEL_SUBCATEGORY_ID)
+    .filter((sc) => sc.categoryId === VEHICLE_CATEGORY_ID && sc.id !== FUEL_SUBCATEGORY_ID && sc.id !== VEHICLE_FINANCING_SUBCATEGORY_ID)
     .map((sc) => ({ value: sc.id, label: sc.name }))
+  const initialLabel = options.find((o) => o.value === initialSub)?.label ?? ''
+  const { share, setShare, available: shareAvailable } = useShare()
   const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(expenseSchema),
     defaultValues: transaction
@@ -470,7 +485,15 @@ function ExpenseForm({ vehicle, transaction, onDone }: { vehicle: Vehicle; trans
           paid: transaction.status === 'pago',
           paymentMethod: (transaction.paymentMethod ?? 'pix') as PaymentMethod,
         }
-      : { subcategoryId: '', description: '', amount: '', date: todayISO(), odometer: '', paid: true, paymentMethod: 'pix' as PaymentMethod },
+      : {
+          subcategoryId: initialSub ?? '',
+          description: initialLabel,
+          amount: '',
+          date: todayISO(),
+          odometer: '',
+          paid: true,
+          paymentMethod: 'pix' as PaymentMethod,
+        },
   })
   const [subcategoryId, paid, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'paid', 'paymentMethod'] })
   const e = formState.errors
@@ -479,7 +502,21 @@ function ExpenseForm({ vehicle, transaction, onDone }: { vehicle: Vehicle; trans
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
+        if (!transaction && shareAvailable && share.on) {
+          const result = await sendShareInvite(share, {
+            title: v.description,
+            totalAmount: cents(v.amount),
+            installments: 1,
+            firstDueDate: v.date as ISODate,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: v.subcategoryId,
+            vehicleId: vehicle.id,
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+          onDone()
+          return
+        }
         const next = keepIdentity(
           transaction,
           expense(vehicle, {
@@ -540,8 +577,9 @@ function ExpenseForm({ vehicle, transaction, onDone }: { vehicle: Vehicle; trans
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
+        {!transaction && shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir este gasto" />}
       </div>
-      <EditActions submitLabel="Salvar gasto" transaction={transaction} onDone={onDone} />
+      <EditActions submitLabel={!transaction && share.on ? 'Enviar convite' : 'Salvar gasto'} transaction={transaction} onDone={onDone} />
     </form>
   )
 }
@@ -885,12 +923,139 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Financiamento / empréstimo do veículo
+// ---------------------------------------------------------------------------
+
+const financingSchema = z
+  .object({
+    kind: z.enum(['financiamento', 'consorcio', 'emprestimo']),
+    bank: z.string().trim().max(40),
+    amount: money('Informe o valor da parcela'),
+    current: z.string().trim().refine((v) => /^\d+$/.test(v) && Number(v) >= 1, 'Número da parcela'),
+    total: z.string().trim().refine((v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 240, 'De 1 a 240'),
+    date,
+    paymentMethod: z.enum(PAYMENT_METHODS),
+  })
+  .refine((v) => Number(v.current) <= Number(v.total), { path: ['current'], message: 'Maior que o total' })
+
+const FINANCING_KINDS = { financiamento: 'Financiamento', consorcio: 'Consórcio', emprestimo: 'Empréstimo' } as const
+
+function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void }) {
+  const add = useFinanceStore((s) => s.addInstallmentPurchase)
+  const { share, setShare, available: shareAvailable } = useShare()
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(financingSchema),
+    defaultValues: {
+      kind: 'financiamento' as keyof typeof FINANCING_KINDS,
+      bank: '',
+      amount: '',
+      current: '1',
+      total: '',
+      date: todayISO(),
+      paymentMethod: 'boleto' as PaymentMethod,
+    },
+  })
+  const [kind, paymentMethod, amount, current, total] = useWatch({ control, name: ['kind', 'paymentMethod', 'amount', 'current', 'total'] })
+  const remaining = Number(total) >= Number(current) && Number(current) >= 1 ? Number(total) - Number(current) + 1 : null
+  const parcela = cents(amount)
+  const e = formState.errors
+
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit(async (v) => {
+        const n = Number(v.current)
+        const N = Number(v.total)
+        const rest = N - n + 1
+        const title = `${FINANCING_KINDS[v.kind]}${v.bank ? ` ${v.bank}` : ''} · ${vehicle.name}`
+        if (shareAvailable && share.on) {
+          // Dividido: o convite cobre só as parcelas que faltam.
+          const result = await sendShareInvite(share, {
+            title,
+            totalAmount: cents(v.amount) * rest,
+            installments: rest,
+            firstDueDate: v.date as ISODate,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: VEHICLE_FINANCING_SUBCATEGORY_ID,
+            vehicleId: vehicle.id,
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+          onDone()
+          return
+        }
+        add({
+          description: title,
+          totalAmount: cents(v.amount) * N,
+          totalInstallments: N,
+          startAt: n,
+          firstDueDate: v.date as ISODate,
+          categoryId: VEHICLE_CATEGORY_ID,
+          subcategoryId: VEHICLE_FINANCING_SUBCATEGORY_ID,
+          paymentMethod: v.paymentMethod,
+          accountName: v.bank || FINANCING_KINDS[v.kind],
+          vehicleId: vehicle.id,
+        })
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <div className="flex flex-col gap-2">
+          <Label>Tipo</Label>
+          <Choices
+            label="Tipo"
+            value={kind}
+            onChange={(x) => setValue('kind', x)}
+            options={(Object.keys(FINANCING_KINDS) as (keyof typeof FINANCING_KINDS)[]).map((k) => ({ value: k, label: FINANCING_KINDS[k] }))}
+          />
+        </div>
+        <Field id="vf-bank" label="Banco ou administradora (opcional)">
+          <Input id="vf-bank" placeholder="Ex.: BV, Santander, Embracon" {...register('bank')} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="vf-amount" label="Valor da parcela" error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="vf-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="vf-date" label="Vencimento da próxima" error={e.date?.message}>
+            <Input id="vf-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="vf-current" label="Próxima parcela é a" error={e.current?.message}>
+            <Input id="vf-current" inputMode="numeric" aria-invalid={!!e.current} {...register('current')} />
+          </Field>
+          <Field id="vf-total" label="De quantas" error={e.total?.message}>
+            <Input id="vf-total" inputMode="numeric" placeholder="Ex.: 48" aria-invalid={!!e.total} {...register('total')} />
+          </Field>
+        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {remaining && parcela > 0
+            ? `Faltam ${remaining} parcelas: ${formatMoney(parcela * remaining)} no total. Entra no custo por km e no Sair do vermelho.`
+            : 'Ex.: na 13ª de 48 parcelas, preencha 13 e 48.'}
+        </p>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+        {shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir as parcelas" />}
+      </div>
+      <FormActions submitLabel={shareAvailable && share.on ? 'Enviar convite' : 'Salvar'} />
+    </form>
+  )
+}
+
+
 function titleOf(d: Exclude<VehicleDialogState, null>): { title: string; description: string } {
   switch (d.kind) {
     case 'vehicle':
       return { title: d.vehicle ? 'Editar veículo' : 'Novo veículo', description: 'Carro, moto ou outro veículo seu.' }
     case 'fuel':
       return { title: d.transaction ? 'Editar abastecimento' : 'Abastecimento', description: d.vehicle.name }
+    case 'financing':
+      return { title: 'Financiamento ou empréstimo', description: `${d.vehicle.name} · as parcelas entram na aba Financiamento.` }
     case 'expense':
       return {
         title: d.transaction ? 'Editar gasto' : 'Gasto com o veículo',
@@ -918,8 +1083,15 @@ export function VehicleDialogs({ state, onClose }: { state: VehicleDialogState; 
         {state?.kind === 'fuel' && (
           <FuelForm key={state.transaction?.id ?? 'new'} vehicle={state.vehicle} currentKm={state.currentKm} transaction={state.transaction} onDone={onClose} />
         )}
+        {state?.kind === 'financing' && <FinancingForm vehicle={state.vehicle} onDone={onClose} />}
         {state?.kind === 'expense' && (
-          <ExpenseForm key={state.transaction?.id ?? 'new'} vehicle={state.vehicle} transaction={state.transaction} onDone={onClose} />
+          <ExpenseForm
+            key={state.transaction?.id ?? state.subcategoryId ?? 'new'}
+            vehicle={state.vehicle}
+            transaction={state.transaction}
+            subcategoryId={state.subcategoryId}
+            onDone={onClose}
+          />
         )}
         {state?.kind === 'reminder' && (
           <ReminderForm vehicle={state.vehicle} currentKm={state.currentKm} reminder={state.reminder} onDone={onClose} />
