@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AtSign, Check, Loader2, Pencil, Users, X } from 'lucide-react'
+import { Loader2, Pencil, Users } from 'lucide-react'
 import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
@@ -9,11 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Affix, bodyClass, Choices, Field, FormActions, formClass } from '@/components/ui/form-kit'
 import { Input, Label } from '@/components/ui/input'
 import { Badge, type Tone } from '@/components/ui/misc'
-import { formatDateShort } from '@/lib/dates'
 import { cents, date, money } from '@/lib/form-fields'
 import { formatMoney, fromCents } from '@/lib/money'
-import { displayName, handleError, myTotal, normalizeHandle, partnerOf, pendingInvites, suggestHandle, unseenRejections } from '@/lib/shared'
-import { acknowledgeSharedBill, cancelSharedBill, claimHandle, lookupHandle, respondSharedBill, updateSharedBill } from '@/lib/shared-cloud'
+import { displayName, handleError, myTotal, normalizeHandle, partnerOf, suggestHandle } from '@/lib/shared'
+import { cancelSharedBill, claimHandle, lookupHandle, updateSharedBill } from '@/lib/shared-cloud'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { useSharedStore } from '@/store/shared-store'
 import type { ISODate, SharedBill, SharedBillStatus, SharedPayerType } from '@/types/finance'
@@ -91,120 +90,21 @@ function HandleForm({ onDone }: { onDone: () => void }) {
 }
 
 export function HandleDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const current = useSharedStore((s) => s.handle)
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Escolha seu @</DialogTitle>
-          <DialogDescription>Único no app, como em redes sociais.</DialogDescription>
+          <DialogTitle>{current ? 'Alterar seu @' : 'Escolha seu @'}</DialogTitle>
+          <DialogDescription>
+            {current
+              ? `Hoje é @${current}. Ao trocar, @${current} fica livre para outra pessoa; contas já compartilhadas continuam valendo.`
+              : 'Único no app, como em redes sociais.'}
+          </DialogDescription>
         </DialogHeader>
         {open && <HandleForm onDone={onClose} />}
       </DialogContent>
     </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Avisos no topo: @, convites, recusas
-// ---------------------------------------------------------------------------
-
-const payerLabel: Record<SharedPayerType, string> = {
-  SPLIT_PAYMENT: 'cada um paga sua parte',
-  SINGLE_PAYER: 'quem convidou pagou tudo; você reembolsa',
-}
-
-function InviteCard({ bill, uid }: { bill: SharedBill; uid: string }) {
-  const [busy, setBusy] = useState<'ACCEPT' | 'REJECT' | null>(null)
-  const creator = bill.participants[0]
-  const me = bill.participants[1]
-  const respond = async (action: 'ACCEPT' | 'REJECT') => {
-    setBusy(action)
-    try {
-      await respondSharedBill(bill, action)
-    } catch (e) {
-      reportSyncError(e)
-    } finally {
-      setBusy(null)
-    }
-  }
-  const total = myTotal(bill, uid)
-  return (
-    <div role="alert" className="flex flex-col gap-3 border-b border-info/30 bg-info-soft px-4 py-3 text-sm">
-      <p>
-        <span className="font-semibold">{displayName(creator)}</span> está te convidando para divisão de uma conta:{' '}
-        <span className="font-semibold">{bill.title}</span>
-        {bill.version > 1 && <span className="text-muted-foreground"> (alterada, precisa de nova confirmação)</span>}
-      </p>
-      <p className="text-muted-foreground">
-        Total {formatMoney(bill.totalAmount)} em {bill.installments}x a partir de {formatDateShort(bill.firstDueDate)}. Sua parte: {me.splitPercentage}% ={' '}
-        <span className="font-medium text-foreground">{formatMoney(total)}</span>
-        {bill.installments > 1 && <> ({bill.installments}x de ~{formatMoney(Math.round(total / bill.installments))})</>}, {payerLabel[bill.payerType]}.
-      </p>
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" disabled={!!busy} onClick={() => respond('REJECT')}>
-          {busy === 'REJECT' ? <Loader2 className="animate-spin" /> : <X />}
-          Recusar
-        </Button>
-        <Button size="sm" disabled={!!busy} onClick={() => respond('ACCEPT')}>
-          {busy === 'ACCEPT' ? <Loader2 className="animate-spin" /> : <Check />}
-          Aceitar
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** Faixas no topo do app: escolher o @, convites pendentes e recusas. */
-export function SharedBanners() {
-  const uid = useAuthStore((s) => (s.status === 'signed_in' ? s.user?.uid : null))
-  const { bills, handle, handleLoaded, rulesMissing } = useSharedStore()
-  const [handleOpen, setHandleOpen] = useState(false)
-  const [dismissedHandle, setDismissedHandle] = useState(false)
-  if (!uid) return null
-  if (rulesMissing)
-    return (
-      <div role="status" className="flex items-center gap-3 border-b px-4 py-2 text-sm text-muted-foreground">
-        <Users className="size-4 shrink-0" />
-        <span className="flex-1">
-          Contas compartilhadas indisponíveis: publique o arquivo firestore.rules em Firebase Console &gt; Firestore &gt; Regras.
-        </span>
-      </div>
-    )
-  const invites = pendingInvites(bills, uid)
-  const rejections = unseenRejections(bills, uid)
-
-  return (
-    <>
-      {handleLoaded && !handle && !dismissedHandle && (
-        <div className="flex items-center gap-3 border-b px-4 py-2 text-sm">
-          <AtSign className="size-4 shrink-0 text-info" />
-          <span className="flex-1">Escolha seu @ para dividir contas com outras pessoas.</span>
-          <Button size="sm" onClick={() => setHandleOpen(true)}>
-            Escolher
-          </Button>
-          <button type="button" aria-label="Agora não" className="grid size-8 place-items-center rounded-lg text-muted-foreground" onClick={() => setDismissedHandle(true)}>
-            <X className="size-4" />
-          </button>
-        </div>
-      )}
-      {invites.map((b) => (
-        <InviteCard key={b.id} bill={b} uid={uid} />
-      ))}
-      {rejections.map((b) => {
-        const partner = partnerOf(b, uid)
-        return (
-          <div key={b.id} role="status" className="flex items-center gap-3 border-b border-expense/30 bg-expense-soft px-4 py-2 text-sm text-expense">
-            <span className="flex-1">
-              {partner ? displayName(partner) : 'O convidado'} recusou a divisão de “{b.title}”.
-            </span>
-            <Button size="sm" variant="outline" onClick={() => acknowledgeSharedBill(b).catch(reportSyncError)}>
-              Ok
-            </Button>
-          </div>
-        )
-      })}
-      <HandleDialog open={handleOpen} onClose={() => setHandleOpen(false)} />
-    </>
   )
 }
 
@@ -345,34 +245,20 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
 /** Card em Lançamentos: contas compartilhadas que criei e que recebi. */
 export function SharedBillsCard() {
   const uid = useAuthStore((s) => (s.status === 'signed_in' ? s.user?.uid : null))
-  const { bills, handle } = useSharedStore()
+  const bills = useSharedStore((s) => s.bills)
   const [editing, setEditing] = useState<SharedBill | null>(null)
-  const [handleOpen, setHandleOpen] = useState(false)
-  if (!uid) return null
   const visible = bills.filter((b) => b.status !== 'CANCELLED')
+  // Sem contas compartilhadas, o card não aparece (o @ fica em Configurações > Conta).
+  if (!uid || visible.length === 0) return null
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-2">
-        <div className="flex flex-col gap-1.5">
-          <CardTitle className="flex items-center gap-2">
-            <Users className="size-5" />
-            Contas compartilhadas
-          </CardTitle>
-          <CardDescription>
-            {handle ? (
-              <>
-                Seu @ é <span className="font-medium text-foreground">@{handle}</span>. Para dividir, use “Dividir esta conta” em Nova despesa.
-              </>
-            ) : (
-              'Escolha seu @ para dividir contas e receber convites.'
-            )}
-          </CardDescription>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => setHandleOpen(true)}>
-          <AtSign />
-          {handle ? 'Mudar @' : 'Escolher @'}
-        </Button>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Users className="size-5" />
+          Contas compartilhadas
+        </CardTitle>
+        <CardDescription>Contas divididas com outras pessoas.</CardDescription>
       </CardHeader>
       {visible.length > 0 && (
         <CardContent>
@@ -412,7 +298,6 @@ export function SharedBillsCard() {
           {editing && <EditForm key={editing.id} bill={editing} onDone={() => setEditing(null)} />}
         </DialogContent>
       </Dialog>
-      <HandleDialog open={handleOpen} onClose={() => setHandleOpen(false)} />
     </Card>
   )
 }

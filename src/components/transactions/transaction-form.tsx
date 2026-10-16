@@ -161,7 +161,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
   const sharing = canShare && share.on
 
   const submitShared = async (v: TransactionFormValues) => {
-    if (!authUser || !myHandle) return setShare((x) => ({ ...x, error: 'Escolha seu @ em Lançamentos > Contas compartilhadas antes de dividir.' }))
+    if (!authUser || !myHandle) return setShare((x) => ({ ...x, error: 'Escolha seu @ em Configurações > Conta antes de dividir.' }))
     const handle = normalizeHandle(share.handle)
     const percent = Number(share.percent)
     if (!handle) return setShare((x) => ({ ...x, error: 'Informe o @ da pessoa' }))
@@ -807,7 +807,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
                     ? 'Cada um paga a própria parte direto ao credor.'
                     : 'Você pagou o total; a pessoa reembolsa a parte dela a você.'}{' '}
                   A pessoa recebe um convite e as parcelas entram para os dois quando ela aceitar.
-                  {!myHandle && ' Antes, escolha seu @ em Lançamentos > Contas compartilhadas.'}
+                  {!myHandle && ' Antes, escolha seu @ em Configurações > Conta.'}
                 </p>
                 {share.error && (
                   <p role="alert" className="text-sm text-expense">

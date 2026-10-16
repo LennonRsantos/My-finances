@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, type ComponentType } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
 import { AuthGate, LocalModeBanner, SyncErrorBanner } from '@/components/layout/auth-gate'
-import { SharedBanners } from '@/components/shared/shared-ui'
 import { EditTransactionDialog } from '@/components/transactions/edit-transaction-dialog'
 import { TransactionDialog } from '@/components/transactions/transaction-dialog'
 import { Skeleton } from '@/components/ui/misc'
@@ -75,7 +74,6 @@ export default function App() {
       <AppShell>
         <LocalModeBanner />
         <SyncErrorBanner />
-        <SharedBanners />
         <Suspense fallback={<PageFallback />}>
           <Page />
         </Suspense>
