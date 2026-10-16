@@ -17,7 +17,7 @@ import {
 } from 'firebase/auth'
 import { useAuthStore } from '@/store/auth-store'
 import { deleteAllUserData } from './cloud'
-import { getFirebase } from './firebase'
+import { getFirebase, isFirebaseConfigured } from './firebase'
 
 export function signInWithGoogle() {
   const { auth } = getFirebase()
@@ -55,12 +55,14 @@ function currentUser(): User {
 }
 
 /** Entra com e-mail e senha (pode ter Google também). */
+const providers = () => (isFirebaseConfigured ? (getFirebase().auth.currentUser?.providerData ?? []) : [])
+
 export function hasPassword(): boolean {
-  return !!getFirebase().auth.currentUser?.providerData.some((p) => p.providerId === 'password')
+  return providers().some((p) => p.providerId === 'password')
 }
 
 export function hasGoogle(): boolean {
-  return !!getFirebase().auth.currentUser?.providerData.some((p) => p.providerId === 'google.com')
+  return providers().some((p) => p.providerId === 'google.com')
 }
 
 /**

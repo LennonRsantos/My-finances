@@ -8,6 +8,7 @@ import {
   KeyRound,
   LogOut,
   Mail,
+  AtSign,
   Monitor,
   Moon,
   Palette,
@@ -23,6 +24,7 @@ import {
 import { useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountDialog, type AccountDialogKind } from '@/components/settings/account-dialogs'
+import { HandleDialog } from '@/components/shared/shared-ui'
 import { CategoryManager } from '@/components/settings/category-manager'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -37,6 +39,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth-store'
 import { useFinanceStore } from '@/store/finance-store'
 import { useSettingsStore } from '@/store/settings-store'
+import { useSharedStore } from '@/store/shared-store'
 import type { ThemePreference } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 
@@ -109,6 +112,8 @@ function AccountSection() {
   const status = useAuthStore((s) => s.status)
   const user = useAuthStore((s) => s.user)
   const [dialog, setDialog] = useState<AccountDialogKind | null>(null)
+  const [handleOpen, setHandleOpen] = useState(false)
+  const { handle, handleLoaded, rulesMissing } = useSharedStore()
 
   if (status !== 'signed_in' || !user) {
     return (
@@ -120,6 +125,7 @@ function AccountSection() {
 
   const password = hasPassword()
   const google = hasGoogle()
+  const handleText = rulesMissing ? 'Indisponível: publique as regras do Firestore' : handle ? `@${handle}` : handleLoaded ? 'Não escolhido' : 'Carregando…'
   const initial = (user.name ?? user.email ?? '?').trim().charAt(0).toUpperCase()
 
   return (
@@ -132,7 +138,10 @@ function AccountSection() {
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-semibold">{user.name ?? 'Sem nome'}</p>
-          <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+          <p className="truncate text-sm text-muted-foreground">
+            {handle && <span className="font-medium text-foreground">@{handle} · </span>}
+            {user.email}
+          </p>
           <p className="mt-1 flex items-center gap-1 text-xs text-income">
             <Cloud className="size-3.5" /> Sincronizado na nuvem
           </p>
@@ -142,6 +151,12 @@ function AccountSection() {
       <Group title="Dados pessoais">
         <Row icon={User} label="Nome" value={user.name ?? 'Sem nome'} onClick={() => setDialog('name')} />
         <Row icon={Mail} label="E-mail" value={user.email} onClick={() => setDialog('email')} />
+        <Row
+          icon={AtSign}
+          label="Seu @"
+          value={handleText}
+          onClick={rulesMissing ? undefined : () => setHandleOpen(true)}
+        />
       </Group>
 
       <Group
@@ -167,6 +182,7 @@ function AccountSection() {
       </Group>
 
       <AccountDialog kind={dialog} onClose={() => setDialog(null)} />
+      <HandleDialog open={handleOpen} onClose={() => setHandleOpen(false)} />
     </>
   )
 }
