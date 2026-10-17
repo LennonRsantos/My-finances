@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/misc'
 import { useCloudSync } from '@/hooks/use-cloud-sync'
 import { useRecurringMaterializer } from '@/hooks/use-recurring'
 import { useSharedReconciler } from '@/hooks/use-shared'
+import { useTransferSync } from '@/hooks/use-transfers'
 import { useThemeSync } from '@/hooks/use-theme'
 import { useUIStore, type View } from '@/store/ui-store'
 
@@ -65,6 +66,7 @@ export default function App() {
   useCloudSync()
   useRecurringMaterializer()
   useSharedReconciler()
+  useTransferSync()
   usePrefetchPages()
   const view = useUIStore((s) => s.view)
   const Page = PAGES[view]

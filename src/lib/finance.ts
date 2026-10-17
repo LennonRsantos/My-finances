@@ -115,8 +115,9 @@ export function computePayeeBalances(transactions: Transaction[], month: YearMon
   const groups = new Map<string, PayeeBalance>()
   for (const t of transactions) {
     if (t.type !== 'despesa' || t.status === 'pago' || !t.payTo?.trim()) continue
-    const key = payeeKey(t.payTo)
-    const g = groups.get(key) ?? { name: t.payTo.trim(), dueThisMonth: 0, totalRemaining: 0, overdueCount: 0, items: [] }
+    // Usuário do app agrupa pelo uid (mesmo que o nome mude); nome livre, pelo nome.
+    const key = t.payToUid ? `uid:${t.payToUid}` : payeeKey(t.payTo)
+    const g = groups.get(key) ?? { name: t.payTo.trim(), handle: t.payToHandle ?? null, dueThisMonth: 0, totalRemaining: 0, overdueCount: 0, items: [] }
     g.totalRemaining += t.amount
     if (t.dueDate <= end) {
       g.dueThisMonth += t.amount
@@ -199,6 +200,8 @@ export interface InstallmentPurchaseInput {
   paymentMethod: PaymentMethod
   accountName: string
   payTo?: string | null
+  payToUid?: string | null
+  payToHandle?: string | null
   /** Marca a parcela `startAt` como paga */
   firstPaid?: boolean
   notes?: string
@@ -231,6 +234,8 @@ export function generateInstallments(input: InstallmentPurchaseInput): {
     paymentMethod: input.paymentMethod,
     accountName: input.accountName,
     payTo: input.payTo ?? null,
+    payToUid: input.payToUid ?? null,
+    payToHandle: input.payToHandle ?? null,
   }
 
   const createdAt = new Date().toISOString()
@@ -252,6 +257,8 @@ export function generateInstallments(input: InstallmentPurchaseInput): {
       installment: { installmentId: installment.id, number: i + 1, total: input.totalInstallments },
       recurringCostId: null,
       payTo: input.payTo ?? null,
+      payToUid: input.payToUid ?? null,
+      payToHandle: input.payToHandle ?? null,
       notes: input.notes,
       vehicleId: input.vehicleId ?? null,
       createdAt,

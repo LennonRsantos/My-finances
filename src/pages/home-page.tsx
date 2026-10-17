@@ -27,6 +27,7 @@ import { HomeDialogs, type HomeDialogState } from '@/components/home/home-dialog
 import { RecurringDialog, RecurringRows } from '@/components/recurring/recurring-dialog'
 import { SharedBadge } from '@/components/shared/share-fields'
 import { SharedBillsCard } from '@/components/shared/shared-ui'
+import { UndoReminderButton } from '@/components/shared/undo-reminder-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
@@ -351,10 +352,13 @@ function MaintenanceCard({ open }: { open: (d: HomeDialogState) => void }) {
                       </span>
                     )}
                   </button>
-                  <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', reminder: r })}>
-                    <CheckCircle2 />
-                    Feito
-                  </Button>
+                  <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+                    <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', reminder: r })}>
+                      <CheckCircle2 />
+                      Feito
+                    </Button>
+                    <UndoReminderButton reminder={r} />
+                  </div>
                 </div>
                 <Progress value={s.progress} color={levelColor[s.level]} label={`${r.name}: ${Math.round(s.progress * 100)}% do intervalo`} />
               </li>

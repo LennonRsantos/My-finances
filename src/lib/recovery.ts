@@ -17,8 +17,13 @@ const DEBT_CATEGORIES = new Set(['cat-emprestimos'])
 /** Dentro de categorias essenciais, mas cortáveis. */
 const LIFESTYLE_SUBCATEGORIES = new Set(['sub-delivery', 'sub-restaurante', 'sub-app', 'sub-veiculo-lavagem', 'sub-casa-moveis'])
 
-export function groupOf(t: Pick<Transaction, 'categoryId' | 'subcategoryId' | 'installment'>): SpendingGroup {
-  if (t.installment || DEBT_CATEGORIES.has(t.categoryId)) return 'dividas'
+export function groupOf(
+  t: Pick<Transaction, 'categoryId' | 'subcategoryId' | 'installment'>,
+  fixedSeries: ReadonlySet<string> = new Set(),
+): SpendingGroup {
+  // Parcelamento marcado como conta fixa (ex.: aluguel em 12x) não é dívida.
+  const fixed = !!t.installment && fixedSeries.has(t.installment.installmentId)
+  if ((t.installment && !fixed) || DEBT_CATEGORIES.has(t.categoryId)) return 'dividas'
   if (t.subcategoryId && LIFESTYLE_SUBCATEGORIES.has(t.subcategoryId)) return 'estilo'
   return ESSENTIAL_CATEGORIES.has(t.categoryId) ? 'essencial' : 'estilo'
 }
@@ -73,7 +78,9 @@ export function computeDiagnosis(
   endMonth: YearMonth,
   today: string,
   n = 3,
+  fixedSeries: readonly string[] = [],
 ): Diagnosis {
+  const fixed = new Set(fixedSeries)
   const window = new Set(lastNMonths(endMonth, n))
   const inWindow = transactions.filter((t) => window.has(monthOf(t.dueDate)))
   const months = [...new Set(inWindow.map((t) => monthOf(t.dueDate)))].sort()
@@ -90,7 +97,7 @@ export function computeDiagnosis(
       continue
     }
     expenses += t.amount
-    const g = groupOf(t)
+    const g = groupOf(t, fixed)
     groups[g] += t.amount
     const entry = byCategory.get(t.categoryId) ?? { total: 0, groups: { essencial: 0, dividas: 0, estilo: 0 } }
     entry.total += t.amount
@@ -225,14 +232,19 @@ export interface EndingInstallment {
   /** Valor da última parcela */
   monthly: Cents
   remaining: number
+  /** Total de parcelas da compra (ex.: 10 em "3/10") */
+  totalInstallments: number
   remainingTotal: Cents
   lastMonth: YearMonth
 }
 
-export function endingInstallments(transactions: Transaction[]): EndingInstallment[] {
+export function endingInstallments(transactions: Transaction[], fixedSeries: readonly string[] = []): EndingInstallment[] {
+  const fixed = new Set(fixedSeries)
   const groups = new Map<string, Transaction[]>()
   for (const t of transactions) {
-    if (!t.installment || t.type !== 'despesa' || t.status === 'pago') continue
+    // Só compras com número fechado de parcelas: fixos recorrentes e parcelas em espera ficam de fora.
+    if (!t.installment || t.recurringCostId || t.sharedSuspended || t.type !== 'despesa' || t.status === 'pago') continue
+    if (fixed.has(t.installment.installmentId)) continue
     const list = groups.get(t.installment.installmentId) ?? []
     list.push(t)
     groups.set(t.installment.installmentId, list)
@@ -246,11 +258,37 @@ export function endingInstallments(transactions: Transaction[]): EndingInstallme
         description: last.description.replace(/\s*\(\d+\/\d+\)$/, ''),
         monthly: last.amount,
         remaining: sorted.length,
+        totalInstallments: last.installment?.total ?? sorted.length,
         remainingTotal: sorted.reduce((a, t) => a + t.amount, 0),
         lastMonth: monthOf(last.dueDate),
       }
     })
     .sort((a, b) => a.lastMonth.localeCompare(b.lastMonth))
+}
+
+export interface InstallmentDebt {
+  /** Soma de todas as parcelas ainda não pagas, de todos os meses */
+  total: Cents
+  /** Compras/empréstimos parcelados em aberto */
+  count: number
+  /** Quanto as parcelas pesam por mês hoje (soma da parcela de cada compra) */
+  monthly: Cents
+  /** Do maior saldo para o menor */
+  items: EndingInstallment[]
+}
+
+/**
+ * Saldo devedor acumulado de compras parceladas: tudo o que ainda falta pagar
+ * de despesas com número limitado de parcelas (não inclui contas fixas).
+ */
+export function installmentDebt(transactions: Transaction[], fixedSeries: readonly string[] = []): InstallmentDebt {
+  const items = endingInstallments(transactions, fixedSeries).sort((a, b) => b.remainingTotal - a.remainingTotal)
+  return {
+    total: items.reduce((a, i) => a + i.remainingTotal, 0),
+    count: items.length,
+    monthly: items.reduce((a, i) => a + i.monthly, 0),
+    items,
+  }
 }
 
 // ---------------------------------------------------------------------------

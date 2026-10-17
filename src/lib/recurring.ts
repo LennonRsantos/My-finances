@@ -53,6 +53,8 @@ export function pendingOccurrences(
       installment: null,
       recurringCostId: rc.id,
       payTo: rc.payTo ?? null,
+      payToUid: rc.payToUid ?? null,
+      payToHandle: rc.payToHandle ?? null,
       vehicleId: rc.vehicleId ?? null,
       createdAt,
     })

@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowDownRight, ArrowUpRight, Layers, Repeat, Send } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Layers, Repeat } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm, useWatch, type DefaultValues } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
@@ -13,7 +13,15 @@ import { formatMoney, splitCents, toCents } from '@/lib/money'
 import { MAX_INSTALLMENTS, parseMoneyInput, transactionFormSchema, type TransactionFormValues } from '@/lib/schemas'
 import { cn, createId } from '@/lib/utils'
 import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
-import { ShareFields, sendShareInvite, useShare } from '@/components/shared/share-fields'
+import { PayToField, type PayLink } from '@/components/shared/pay-to-field'
+import {
+  SHARED_FIXED_MONTHS,
+  ShareFields,
+  fixedShareNote,
+  sendShareInvite,
+  useShare,
+  yearlyShareNote,
+} from '@/components/shared/share-fields'
 import { useFinanceStore } from '@/store/finance-store'
 import {
   PAYMENT_METHOD_LABELS,
@@ -102,7 +110,10 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
   const ongoing = isInstallment && installmentMode === 'andamento'
-  const payTo = useWatch({ control, name: 'payTo' })?.trim()
+  const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
+  const payTo = payToRaw.trim()
+  // Usuário do app escolhido em "Enviar para" (ele vê o valor no Dashboard dele).
+  const [payLink, setPayLink] = useState<PayLink | null>(null)
 
   /** Nomes já usados, para autocompletar. */
   const payeeSuggestions = useMemo(() => {
@@ -152,23 +163,39 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
   // Dividir esta conta com outro usuário (pelo @). Só com login.
   const { share, setShare, available: shareAvailable, reset: resetShare } = useShare()
-  const canShare = shareAvailable && type === 'despesa' && !isRecurring && !ongoing
+  const canShare = shareAvailable && type === 'despesa'
   const sharing = canShare && share.on
   // Gasto do veículo sempre com tipo (seguro, manutenção...), para cair na caixa certa.
   const [subMissing, setSubMissing] = useState(false)
 
   const submitShared = async (v: TransactionFormValues) => {
+    const value = toCents(v.amount)
+    // Fixo mensal vira 12 meses; em andamento, só as parcelas que faltam.
+    const count = v.isRecurring
+      ? v.frequency === 'mensal'
+        ? SHARED_FIXED_MONTHS
+        : 1
+      : v.isInstallment
+        ? v.installmentMode === 'andamento'
+          ? v.installments - v.currentInstallment + 1
+          : v.installments
+        : 1
+    const perInstallment = v.isRecurring || (v.isInstallment && v.installmentMode === 'andamento')
     const result = await sendShareInvite(share, {
       title: v.description,
-      totalAmount: toCents(v.amount),
-      installments: v.isInstallment ? v.installments : 1,
+      totalAmount: perInstallment ? value * count : value,
+      installments: count,
       firstDueDate: v.dueDate as ISODate,
       categoryId: v.categoryId,
       subcategoryId: v.subcategoryId,
       vehicleId,
     })
     if ('error' in result) return setShare({ ...share, error: result.error })
-    onSuccess?.(`Convite enviado para @${result.handle}. As parcelas entram quando a pessoa aceitar.`)
+    onSuccess?.(
+      result.auto
+        ? `Conta dividida com @${result.handle}: aceita automaticamente, já está nos lançamentos dos dois.`
+        : `Convite enviado para @${result.handle}. As parcelas entram quando a pessoa aceitar.`,
+    )
     reset(defaultValues(v.type))
     resetShare()
   }
@@ -183,6 +210,8 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     const due = v.dueDate as ISODate
     const totalCents = toCents(v.amount)
     const payTo = v.type === 'despesa' && v.payTo ? v.payTo : null
+    const link = payTo ? payLink : null
+    const payTarget = { payToUid: link?.uid ?? null, payToHandle: link?.handle ?? null }
 
     if (v.isRecurring) {
       const base = {
@@ -201,6 +230,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         endDate: null,
         lastGeneratedMonth: null,
         payTo,
+        ...payTarget,
         vehicleId,
         createdAt: new Date().toISOString(),
       }
@@ -226,6 +256,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         accountName: v.accountName || PAYMENT_METHOD_LABELS[v.paymentMethod],
         firstPaid: v.paid,
         payTo,
+        ...payTarget,
         notes: v.notes || undefined,
       })
       onSuccess?.(`${v.installments - startAt + 1} parcelas de "${v.description}" lançadas`)
@@ -244,6 +275,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         installment: null,
         recurringCostId: null,
         payTo,
+        ...payTarget,
         vehicleId,
         notes: v.notes || undefined,
         createdAt: new Date().toISOString(),
@@ -253,6 +285,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     }
     reset(defaultValues(v.type))
     setPickedVehicle(undefined)
+    setPayLink(null)
   }
 
   const today = todayISO()
@@ -496,26 +529,15 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
         {/* Para quem enviar (só despesa) */}
         {type === 'despesa' && (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="payTo" className="flex items-center gap-1.5">
-              <Send className="size-3.5 text-muted-foreground" /> Enviar para (opcional)
-            </Label>
-            <Input
-              id="payTo"
-              list="payTo-suggestions"
-              autoComplete="off"
-              placeholder="Ex.: Isadora"
-              aria-invalid={!!errors.payTo}
-              {...register('payTo')}
-            />
-            <datalist id="payTo-suggestions">
-              {payeeSuggestions.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-            <p className="text-xs text-muted-foreground">O valor entra no total "A enviar" dessa pessoa no Dashboard.</p>
-            <FieldError message={errors.payTo?.message} />
-          </div>
+          <PayToField
+            id="payTo"
+            value={payToRaw}
+            onChange={(name) => setValue('payTo', name, { shouldValidate: !!errors.payTo })}
+            link={payLink}
+            onLinkChange={setPayLink}
+            suggestions={payeeSuggestions}
+            error={errors.payTo?.message}
+          />
         )}
 
         {/* Status */}
@@ -740,7 +762,13 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           </div>
         )}
 
-        {canShare && <ShareFields share={share} onChange={setShare} />}
+        {canShare && (
+          <ShareFields
+            share={share}
+            onChange={setShare}
+            note={isRecurring ? (frequency === 'mensal' ? fixedShareNote : yearlyShareNote) : ongoing ? 'O convite cobre só as parcelas que faltam.' : undefined}
+          />
+        )}
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="notes">Observações (opcional)</Label>

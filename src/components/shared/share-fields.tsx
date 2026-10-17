@@ -1,14 +1,14 @@
 import { Users } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Label } from '@/components/ui/input'
 import { Input } from '@/components/ui/input'
 import { Badge, Switch } from '@/components/ui/misc'
-import { normalizeHandle, partnerOf } from '@/lib/shared'
+import { normalizeHandle, partnerOf, sharedRole, type SharedRole } from '@/lib/shared'
 import { createSharedBill, lookupHandle, type NewSharedBill } from '@/lib/shared-cloud'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth-store'
 import { useSharedStore } from '@/store/shared-store'
-import type { SharedPayerType } from '@/types/finance'
+import type { SharedPayerType, Transaction } from '@/types/finance'
 
 export interface ShareState {
   on: boolean
@@ -17,6 +17,11 @@ export interface ShareState {
   payerType: SharedPayerType
   error: string
 }
+
+/** Conta fixa mensal dividida vira convite destes meses; depois, divide de novo. */
+export const SHARED_FIXED_MONTHS = 12
+export const fixedShareNote = `Conta fixa: o convite cobre os próximos ${SHARED_FIXED_MONTHS} meses; depois, divida de novo.`
+export const yearlyShareNote = 'Conta anual: o convite vale só para esta vez.'
 
 export const emptyShare: ShareState = { on: false, handle: '', percent: '50', payerType: 'SPLIT_PAYMENT', error: '' }
 
@@ -33,7 +38,7 @@ type Bill = Omit<NewSharedBill, 'creator' | 'invitee' | 'inviteePercent' | 'paye
  * Valida o @ e envia o convite. Devolve a mensagem de erro (mostrada nos
  * campos) ou `null` quando o convite foi criado.
  */
-export async function sendShareInvite(share: ShareState, bill: Bill): Promise<{ error: string } | { handle: string }> {
+export async function sendShareInvite(share: ShareState, bill: Bill): Promise<{ error: string } | { id: string; handle: string; auto: boolean }> {
   const user = useAuthStore.getState().user
   const myHandle = useSharedStore.getState().handle
   if (!user || !myHandle) return { error: 'Escolha seu @ em Configurações > Conta antes de dividir.' }
@@ -47,17 +52,67 @@ export async function sendShareInvite(share: ShareState, bill: Bill): Promise<{ 
   try {
     const partner = await lookupHandle(handle)
     if (!partner) return { error: `Nenhum usuário com @${handle}` }
-    await createSharedBill({
+    const created = await createSharedBill({
       ...bill,
       payerType: share.payerType,
       inviteePercent: percent,
       creator: { uid: user.uid, handle: myHandle, name: user.name },
       invitee: { uid: partner.uid, handle, name: partner.name },
     })
-    return { handle }
+    return { id: created.id, handle, auto: created.status === 'ACCEPTED' }
   } catch {
     return { error: 'Não foi possível enviar o convite. Verifique a conexão e tente de novo.' }
   }
+}
+
+export interface KnownPartner {
+  uid: string
+  handle: string
+  name: string | null
+}
+
+/** Pessoas com quem já dividi alguma conta, da mais recente para a mais antiga. */
+export function useKnownPartners(): KnownPartner[] {
+  const uid = useAuthStore((s) => (s.status === 'signed_in' ? (s.user?.uid ?? null) : null))
+  const bills = useSharedStore((s) => s.bills)
+  return useMemo(() => {
+    if (!uid) return []
+    const seen = new Map<string, KnownPartner>()
+    for (const bill of [...bills].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))) {
+      const p = partnerOf(bill, uid)
+      if (p?.handle && !seen.has(p.handle)) seen.set(p.handle, { uid: p.userId, handle: p.handle, name: p.name })
+    }
+    return [...seen.values()]
+  }, [bills, uid])
+}
+
+const MAX_SUGGESTIONS = 6
+
+/** Chips com os @ conhecidos; filtra pelo que foi digitado e some quando já bate. */
+function PartnerSuggestions({ value, onPick }: { value: string; onPick: (handle: string) => void }) {
+  const partners = useKnownPartners()
+  const typed = normalizeHandle(value)
+  if (partners.some((p) => p.handle === typed)) return null
+  const list = partners.filter((p) => !typed || p.handle.startsWith(typed) || p.name?.toLowerCase().includes(typed)).slice(0, MAX_SUGGESTIONS)
+  if (!list.length) return null
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="text-xs text-muted-foreground">Já dividiu com</span>
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+        {list.map((p) => (
+          <button
+            key={p.handle}
+            type="button"
+            onClick={() => onPick(p.handle)}
+            className="flex shrink-0 items-center gap-1 rounded-full border bg-card px-3 py-1.5 text-sm transition-colors hover:bg-muted"
+          >
+            <span className="font-medium">@{p.handle}</span>
+            {p.name && <span className="max-w-32 truncate text-muted-foreground">· {p.name}</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /** Bloco "Dividir esta conta": @ da pessoa, parte dela e quem paga. */
@@ -107,6 +162,7 @@ export function ShareFields({
               </div>
             </div>
           </div>
+          <PartnerSuggestions value={share.handle} onPick={(handle) => set({ handle })} />
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Quem paga">
             {(
               [
@@ -141,6 +197,13 @@ export function ShareFields({
       )}
     </div>
   )
+}
+
+/** Sou criador ou convidado da conta deste lançamento? (`null` se não é dividido) */
+export function useSharedRole(t: Pick<Transaction, 'sharedBillId'> | undefined): SharedRole | null {
+  const uid = useAuthStore((s) => (s.status === 'signed_in' ? (s.user?.uid ?? null) : null))
+  const bills = useSharedStore((s) => s.bills)
+  return useMemo(() => (t ? sharedRole(t, bills, uid) : null), [t, bills, uid])
 }
 
 /** @ da outra pessoa de uma conta compartilhada; `null` enquanto a conta não chegou do Firestore. */

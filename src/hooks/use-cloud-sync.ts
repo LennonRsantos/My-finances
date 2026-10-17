@@ -13,7 +13,7 @@ import {
 import { getFirebase, isFirebaseConfigured } from '@/lib/firebase'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { initialFinanceData, useFinanceStore } from '@/store/finance-store'
-import { subscribeHandle, subscribeSharedBills } from '@/lib/shared-cloud'
+import { subscribeHandle, subscribeSharedBills, subscribeTransfers } from '@/lib/shared-cloud'
 import { initialRecovery, recoveryData, useRecoveryStore } from '@/store/recovery-store'
 import { resetShared, useSharedStore } from '@/store/shared-store'
 import { defaultSettings, useSettingsStore } from '@/store/settings-store'
@@ -89,6 +89,15 @@ function startSync(uid: string): Unsubscribe {
       if ((e as { code?: string })?.code === 'permission-denied') useSharedStore.setState({ rulesMissing: true })
       else reportSyncError(e)
     }),
+    subscribeTransfers(
+      uid,
+      (outgoing) => useSharedStore.setState({ outgoing, transfersLoaded: true }),
+      (incoming) => useSharedStore.setState({ incoming }),
+      // Regras de `transfers` não publicadas: "Enviar para" segue só local, como antes.
+      (e) => {
+        if ((e as { code?: string })?.code !== 'permission-denied') reportSyncError(e)
+      },
+    ),
   )
   return () => unsubs.forEach((u) => u())
 }

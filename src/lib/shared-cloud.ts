@@ -4,13 +4,16 @@
  *   handles/{handle}       { uid, name }   reserva do @ (só cria se não existir)
  *   users/{uid}            { handle, ... } @ do usuário
  *   sharedBills/{id}       SharedBill      lida por criador e convidado
+ *   autoAccept/{uid}       { uids }        quem tem contas aceitas sem pedir
+ *   transfers/{from}_{tx}  Transfer        "Lennon deve te enviar R$ X"
  *
  * As regras em `firestore.rules` garantem: @ não se repete; só criador e
  * convidado leem a conta; o convidado só pode aceitar/recusar (não muda
  * valores nem percentuais); o criador não muda quem é o convidado.
  */
 import { collection, doc, getDoc, onSnapshot, query, setDoc, updateDoc, where, writeBatch, type Unsubscribe } from 'firebase/firestore'
-import type { Category, Cents, ISODate, SharedBill, SharedPayerType } from '@/types/finance'
+import type { Category, Cents, ISODate, SharedBill, SharedBillReplaces, SharedPayerType, Transfer } from '@/types/finance'
+import type { TransferData } from './transfers'
 import { getFirebase } from './firebase'
 import { splitShares } from './shared'
 import { createId } from './utils'
@@ -20,6 +23,64 @@ const handleDoc = (handle: string) => doc(db(), 'handles', handle)
 const userDoc = (uid: string) => doc(db(), 'users', uid)
 const billsCol = () => collection(db(), 'sharedBills')
 const billDoc = (id: string) => doc(db(), 'sharedBills', id)
+const autoAcceptDoc = (uid: string) => doc(db(), 'autoAccept', uid)
+const transfersCol = () => collection(db(), 'transfers')
+const transferDoc = (id: string) => doc(db(), 'transfers', id)
+
+// ---------------------------------------------------------------------------
+// Valores a enviar entre usuários
+// ---------------------------------------------------------------------------
+
+/** Escuta o que eu devo enviar (meus espelhos) e o que me devem. */
+export function subscribeTransfers(
+  uid: string,
+  onOutgoing: (list: Transfer[]) => void,
+  onIncoming: (list: Transfer[]) => void,
+  onError: (e: unknown) => void,
+): Unsubscribe {
+  const a = onSnapshot(query(transfersCol(), where('fromUid', '==', uid)), (s) => onOutgoing(s.docs.map((d) => d.data() as Transfer)), onError)
+  const b = onSnapshot(query(transfersCol(), where('toUid', '==', uid)), (s) => onIncoming(s.docs.map((d) => d.data() as Transfer)), onError)
+  return () => {
+    a()
+    b()
+  }
+}
+
+/** Grava e apaga espelhos em lotes (limite de 500 operações por lote). */
+export async function writeTransfers(upserts: TransferData[], deletes: string[]) {
+  const now = new Date().toISOString()
+  const ops = [...upserts.map((t) => ({ t })), ...deletes.map((id) => ({ id }))]
+  for (let i = 0; i < ops.length; i += 450) {
+    const batch = writeBatch(db())
+    for (const op of ops.slice(i, i + 450)) {
+      if ('t' in op) batch.set(transferDoc(op.t.id), { ...op.t, updatedAt: now })
+      else batch.delete(transferDoc(op.id))
+    }
+    await batch.commit()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Aceite automático
+// ---------------------------------------------------------------------------
+
+/** Grava quem pode me mandar contas que entram direto. */
+export function saveAutoAccept(uid: string, uids: string[]) {
+  return setDoc(autoAcceptDoc(uid), { uids })
+}
+
+/**
+ * O convidado aceita minhas contas sem perguntar? As regras só deixam ler a
+ * lista de quem está nela; qualquer erro (sem permissão, sem rede) = não.
+ */
+export async function acceptsMe(inviteeUid: string, myUid: string): Promise<boolean> {
+  try {
+    const snap = await getDoc(autoAcceptDoc(inviteeUid))
+    return snap.exists() && ((snap.data().uids as string[] | undefined) ?? []).includes(myUid)
+  } catch {
+    return false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // @ único
@@ -82,6 +143,7 @@ export interface NewSharedBill {
   categoryId: Category['id']
   subcategoryId?: string | null
   vehicleId?: string | null
+  replaces?: SharedBillReplaces | null
   payerType: SharedPayerType
   /** % da conta que cabe ao convidado */
   inviteePercent: number
@@ -89,9 +151,13 @@ export interface NewSharedBill {
   invitee: { uid: string; handle: string; name: string | null }
 }
 
-/** Cria o convite (status PENDING). As parcelas só nascem quando o convidado aceitar. */
+/**
+ * Cria o convite (status PENDING). As parcelas só nascem quando o convidado
+ * aceitar. Se o convidado me deixou no aceite automático, já nasce ACCEPTED.
+ */
 export async function createSharedBill(input: NewSharedBill): Promise<SharedBill> {
   const now = new Date().toISOString()
+  const auto = await acceptsMe(input.invitee.uid, input.creator.uid)
   const shares = splitShares(input.totalAmount, input.inviteePercent)
   const bill: SharedBill = {
     id: createId(),
@@ -102,22 +168,36 @@ export async function createSharedBill(input: NewSharedBill): Promise<SharedBill
     categoryId: input.categoryId,
     subcategoryId: input.subcategoryId ?? null,
     vehicleId: input.vehicleId ?? null,
+    replaces: input.replaces ?? null,
     payerType: input.payerType,
-    status: 'PENDING',
+    status: auto ? 'ACCEPTED' : 'PENDING',
     createdBy: input.creator.uid,
     invitedUid: input.invitee.uid,
     participants: [
       { userId: input.creator.uid, handle: input.creator.handle, name: input.creator.name, role: 'creator', splitPercentage: 100 - input.inviteePercent, calculatedAmount: shares.creator, status: 'ACCEPTED' },
-      { userId: input.invitee.uid, handle: input.invitee.handle, name: input.invitee.name, role: 'invitee', splitPercentage: input.inviteePercent, calculatedAmount: shares.invitee, status: 'PENDING_APPROVAL' },
+      { userId: input.invitee.uid, handle: input.invitee.handle, name: input.invitee.name, role: 'invitee', splitPercentage: input.inviteePercent, calculatedAmount: shares.invitee, status: auto ? 'ACCEPTED' : 'PENDING_APPROVAL' },
     ],
     version: 1,
     creatorAcknowledged: false,
-    respondedAt: null,
+    respondedAt: auto ? now : null,
     createdAt: now,
     updatedAt: now,
   }
-  await setDoc(billDoc(bill.id), bill)
-  return bill
+  try {
+    await setDoc(billDoc(bill.id), bill)
+    return bill
+  } catch (e) {
+    if (!auto) throw e
+    // Regras antigas (sem aceite automático publicado): vai como convite comum.
+    const pending: SharedBill = {
+      ...bill,
+      status: 'PENDING',
+      respondedAt: null,
+      participants: [bill.participants[0], { ...bill.participants[1], status: 'PENDING_APPROVAL' }],
+    }
+    await setDoc(billDoc(bill.id), pending)
+    return pending
+  }
 }
 
 /** Convidado aceita ou recusa. As regras só deixam mudar status, participantes (status) e datas. */
@@ -144,7 +224,7 @@ export interface SharedBillEdit {
  * volta a PENDING com versão nova e o convidado precisa aceitar de novo
  * (as parcelas antigas ficam suspensas até lá). Só o título: muda direto.
  */
-export function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
+export async function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
   const now = new Date().toISOString()
   const shares = splitShares(edit.totalAmount, edit.inviteePercent)
   const invitee = bill.participants[1]
@@ -154,7 +234,8 @@ export function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
     edit.firstDueDate !== bill.firstDueDate ||
     edit.payerType !== bill.payerType ||
     edit.inviteePercent !== invitee.splitPercentage
-  const reconfirm = material && bill.status !== 'PENDING'
+  // Convidado com aceite automático para mim: a mudança vale sem pedir de novo.
+  const reconfirm = material && bill.status !== 'PENDING' && !(bill.status === 'ACCEPTED' && (await acceptsMe(bill.invitedUid, bill.createdBy)))
   const participants: SharedBill['participants'] = [
     { ...bill.participants[0], splitPercentage: 100 - edit.inviteePercent, calculatedAmount: shares.creator },
     { ...invitee, splitPercentage: edit.inviteePercent, calculatedAmount: shares.invitee, status: reconfirm ? 'PENDING_APPROVAL' : invitee.status },

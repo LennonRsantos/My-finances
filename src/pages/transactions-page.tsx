@@ -8,9 +8,7 @@ import { RecurringList } from '@/components/transactions/recurring-list'
 import {
   activeFilterCount,
   applyFilters,
-  DEFAULT_FILTERS,
   TransactionFilters,
-  type Filters,
 } from '@/components/transactions/transaction-filters'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -21,7 +19,13 @@ import { resolveStatus, transactionsInMonth } from '@/lib/finance'
 import { categoryIconMap } from '@/lib/icons'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
+import { useTxFilters } from '@/hooks/use-saved-filters'
+import { sharedRole } from '@/lib/shared'
+import { cancelSharedBill } from '@/lib/shared-cloud'
+import { reportSyncError, useAuthStore } from '@/store/auth-store'
+import { useSharedStore } from '@/store/shared-store'
 import { useFinanceStore } from '@/store/finance-store'
+import { NO_FIXED_SERIES, useSettingsStore } from '@/store/settings-store'
 import { useUIStore } from '@/store/ui-store'
 import { PAYMENT_METHOD_LABELS, type ISODate, type TransactionStatus, type TransactionType } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
@@ -59,21 +63,18 @@ export function TransactionsPage() {
     })),
   )
   const month = useUIStore((s) => s.selectedMonth)
+  const fixedSeries = useSettingsStore((s) => s.settings.fixedSeries ?? NO_FIXED_SERIES)
   const tab = useUIStore((s) => s.transactionsTab)
   const setTab = useUIStore((s) => s.setTransactionsTab)
   const openForm = useUIStore((s) => s.setTransactionDialogOpen)
   const edit = useUIStore((s) => s.setEditingTransaction)
+  const uid = useAuthStore((s) => (s.status === 'signed_in' ? (s.user?.uid ?? null) : null))
+  const sharedBills = useSharedStore((s) => s.bills)
   const [query, setQuery] = useState('')
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
+  const [filters, setFilters] = useTxFilters(tab)
   const [filtersOpen, setFiltersOpen] = useState(false)
   // Exclusão em dois cliques: o primeiro arma, o segundo confirma.
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
-  // Categorias são diferentes entre despesas e receitas.
-  const [filtersTab, setFiltersTab] = useState(tab)
-  if (filtersTab !== tab) {
-    setFiltersTab(tab)
-    setFilters((f) => ({ ...f, categoryId: 'all' }))
-  }
   const today = todayISO()
 
   const monthRows = useMemo(() => transactionsInMonth(transactions, month), [transactions, month])
@@ -204,6 +205,7 @@ export function TransactionsPage() {
                 const status = resolveStatus(t, today)
                 const paid = status === 'pago'
                 const confirming = confirmingId === t.id
+                const role = sharedRole(t, sharedBills, uid)
                 const amountAndStatus = (
                   <>
                     <span className={cn('text-sm font-semibold tabular-nums', t.type === 'receita' && 'text-income')}>
@@ -236,7 +238,12 @@ export function TransactionsPage() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="flex items-start gap-1.5 text-sm font-medium">
-                          {t.installment && <Layers className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Parcela" />}
+                          {t.installment && !fixedSeries.includes(t.installment.installmentId) && (
+                            <Layers className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Parcela" />
+                          )}
+                          {t.installment && fixedSeries.includes(t.installment.installmentId) && (
+                            <Repeat className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Conta fixa" />
+                          )}
                           {t.recurringCostId && <Repeat className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Fixo" />}
                           {/* Celular: até 2 linhas para "Celular (5/10)" não perder o número da parcela. */}
                           <span className="line-clamp-2 min-w-0 break-words sm:line-clamp-1">{t.description}</span>
@@ -282,14 +289,33 @@ export function TransactionsPage() {
                       <Button
                         variant={confirming ? 'expense' : 'ghost'}
                         size="icon"
+                        disabled={role?.role === 'invitee'}
                         onClick={() => {
                           if (!confirming) return setConfirmingId(t.id)
-                          removeTransaction(t.id)
+                          // Conta dividida criada por mim: cancela para os dois.
+                          if (role?.role === 'creator') cancelSharedBill(role.bill).catch(reportSyncError)
+                          else removeTransaction(t.id)
                           setConfirmingId(null)
                         }}
                         onBlur={() => setConfirmingId(null)}
-                        aria-label={confirming ? `Confirmar exclusão de ${t.description}` : `Excluir ${t.description}`}
-                        title={confirming ? 'Clique de novo para excluir' : 'Excluir'}
+                        aria-label={
+                          role?.role === 'invitee'
+                            ? `Só @${role.partner} pode cancelar ${t.description}`
+                            : confirming
+                              ? `Confirmar ${role ? 'cancelamento' : 'exclusão'} de ${t.description}`
+                              : `${role ? 'Cancelar conta dividida' : 'Excluir'} ${t.description}`
+                        }
+                        title={
+                          role?.role === 'invitee'
+                            ? `Só @${role.partner} pode cancelar`
+                            : confirming
+                              ? role
+                                ? 'Clique de novo: cancela para os dois'
+                                : 'Clique de novo para excluir'
+                              : role
+                                ? 'Cancelar conta dividida'
+                                : 'Excluir'
+                        }
                         className={confirming ? undefined : 'text-muted-foreground'}
                       >
                         {confirming ? <Trash2 /> : <X />}

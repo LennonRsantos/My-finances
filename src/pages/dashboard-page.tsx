@@ -3,6 +3,8 @@ import { BudgetProgress } from '@/components/dashboard/budget-progress'
 import { AreaStrip } from '@/components/dashboard/area-strip'
 import { CategoryDonut } from '@/components/dashboard/category-donut'
 import { DueAlerts } from '@/components/dashboard/due-alerts'
+import { InstallmentDebtCard } from '@/components/dashboard/installment-debt'
+import { ReceivablesCard } from '@/components/dashboard/receivables-card'
 import { MonthSelector } from '@/components/dashboard/month-selector'
 import { MonthlyComparison } from '@/components/dashboard/monthly-comparison'
 import { PayeesCard } from '@/components/dashboard/payees-card'
@@ -45,6 +47,7 @@ export function DashboardPage() {
           <>
             <MonthStatement summary={data.summary} toPay={data.toPay} />
             <PayeesCard data={data.payees} month={data.month} today={data.today} />
+            <ReceivablesCard month={data.month} today={data.today} />
 
             {!data.hasData && (
               <Card>
@@ -65,6 +68,7 @@ export function DashboardPage() {
             <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-5">
               <div className="flex flex-col gap-4 lg:col-span-2">
                 <DueAlerts alerts={data.alerts} days={data.dueSoonDays} />
+                <InstallmentDebtCard debt={data.installmentDebt} />
                 <BudgetProgress data={data.budgetUsage} />
               </div>
               <div className="flex flex-col gap-4 lg:col-span-3">

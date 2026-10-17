@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { useShallow } from 'zustand/react/shallow'
 import { ChartTooltip } from '@/components/dashboard/chart-tooltip'
 import { RecurringDialog } from '@/components/recurring/recurring-dialog'
+import { UndoReminderButton } from '@/components/shared/undo-reminder-button'
 import { VehicleDialogs, type VehicleDialogState } from '@/components/vehicle/vehicle-dialogs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -145,10 +146,13 @@ function RemindersCard({
                         <span className="block text-xs text-muted-foreground">Informe o custo para saber quanto guardar</span>
                       )}
                     </button>
-                    <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', vehicle, currentKm, reminder: r })}>
-                      <CheckCircle2 />
-                      Feita
-                    </Button>
+                    <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+                      <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', vehicle, currentKm, reminder: r })}>
+                        <CheckCircle2 />
+                        Feita
+                      </Button>
+                      <UndoReminderButton reminder={r} />
+                    </div>
                   </div>
                   <Progress value={s.progress} color={levelColor[s.level]} label={`${r.name}: ${Math.round(s.progress * 100)}% do intervalo`} />
                 </li>

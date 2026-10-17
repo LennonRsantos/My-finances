@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import type { PayeeBalance, YearMonth } from '@/types/finance'
 
-/** Quanto falta enviar para cada pessoa, com os itens do mês. */
+/** Quanto falta enviar para cada pessoa, com os itens do mês. Usuário do app também vê. */
 export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month: YearMonth; today: string }) {
   const togglePaid = useFinanceStore((s) => s.togglePaid)
   const [open, setOpen] = useState<string | null>(null)
@@ -22,7 +22,7 @@ export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <CardTitle>A enviar</CardTitle>
+          <CardTitle>Você precisa enviar</CardTitle>
           <CardDescription>Até o fim de {formatMonthLabel(month).toLowerCase()}</CardDescription>
         </div>
         <span className="text-xl font-semibold tabular-nums tracking-[-0.01em]">{formatMoney(totalMonth)}</span>
@@ -30,7 +30,7 @@ export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month
       <CardContent>
         <ul className="flex flex-col divide-y rounded-lg border">
           {data.map((p) => {
-            const key = payeeKey(p.name)
+            const key = p.handle ? `@${p.handle}` : payeeKey(p.name)
             const expanded = open === key
             return (
               <li key={key}>
@@ -47,7 +47,8 @@ export function PayeesCard({ data, month, today }: { data: PayeeBalance[]; month
                       <span className="truncate font-medium">{p.name}</span>
                       {p.overdueCount > 0 && <Badge tone="expense">{p.overdueCount} atrasado{p.overdueCount > 1 ? 's' : ''}</Badge>}
                     </span>
-                    <span className="block text-xs text-muted-foreground">
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {p.handle && <span className="text-info">@{p.handle} também vê · </span>}
                       {p.totalRemaining > p.dueThisMonth
                         ? `Total restante ${formatMoney(p.totalRemaining)}`
                         : `${p.items.length} ${p.items.length === 1 ? 'item' : 'itens'}`}

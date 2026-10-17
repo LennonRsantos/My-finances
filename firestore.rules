@@ -24,6 +24,29 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
+    // Quem pode me mandar contas que entram direto. Só eu escrevo; quem está
+    // na lista consegue ler (para saber se a conta já nasce aceita).
+    match /autoAccept/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || request.auth.uid in resource.data.uids);
+      allow write: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uids'])
+        && request.resource.data.uids is list
+        && request.resource.data.uids.size() <= 50;
+    }
+
+    // "Enviar para @usuário": quem deve grava o espelho; quem deve e quem
+    // recebe leem. O id amarra o espelho a quem deve e ao lançamento.
+    match /transfers/{id} {
+      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create, update: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.txId
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.amount > 0
+        && request.resource.data.status in ['PENDING', 'SENT'];
+      allow delete: if signedIn() && resource.data.fromUid == request.auth.uid;
+    }
+
     // Contas compartilhadas: só criador e convidado leem.
     match /sharedBills/{billId} {
       function isCreator() {
@@ -45,10 +68,20 @@ service cloud.firestore {
 
       allow read: if isCreator() || isInvitee();
 
+      // Convite comum nasce PENDING; com aceite automático do convidado para
+      // este criador, pode nascer ACCEPTED.
+      function autoAccepted() {
+        let list = /databases/$(database)/documents/autoAccept/$(request.resource.data.invitedUid);
+        return request.resource.data.status == 'ACCEPTED'
+          && request.resource.data.participants[1].status == 'ACCEPTED'
+          && exists(list)
+          && request.auth.uid in get(list).data.uids;
+      }
+
       allow create: if signedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.invitedUid != request.auth.uid
-        && request.resource.data.status == 'PENDING'
+        && (request.resource.data.status == 'PENDING' || autoAccepted())
         && request.resource.data.version == 1
         && request.resource.data.totalAmount > 0
         && request.resource.data.installments >= 1 && request.resource.data.installments <= 120

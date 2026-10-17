@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ShareFields, sendShareInvite, useShare } from '@/components/shared/share-fields'
+import { SHARED_FIXED_MONTHS, ShareFields, fixedShareNote, sendShareInvite, useShare } from '@/components/shared/share-fields'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -57,8 +57,6 @@ function homeExpense(fields: Pick<Transaction, 'description' | 'amount' | 'subca
 // ---------------------------------------------------------------------------
 
 /** Conta fixa dividida vira parcelas mensais: o convite cobre este tanto de meses. */
-const SHARED_FIXED_MONTHS = 12
-const fixedShareNote = `Conta fixa: o convite cobre os próximos ${SHARED_FIXED_MONTHS} meses; depois, divida de novo.`
 
 /**
  * Campos "Dividir" dos formulários da casa. Com a divisão ligada, o gasto não
@@ -78,9 +76,9 @@ function useHomeShare() {
     })
     if ('error' in result) {
       setShare({ ...share, error: result.error })
-      return false
+      return null
     }
-    return true
+    return result.id
   }
   return { share, setShare, available, on: available && share.on, send }
 }
@@ -355,15 +353,15 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
       onSubmit={handleSubmit(async (v) => {
         const value = v.amount ? cents(v.amount) : 0
         if (sharing.on && value > 0) {
-          const ok = await sharing.send({
+          const billId = await sharing.send({
             title: reminder.name,
             total: value,
             installments: 1,
             due: v.date as ISODate,
             subcategoryId: HOME_MAINTENANCE_SUBCATEGORY_ID,
           })
-          if (!ok) return
-          complete(reminder.id, null, v.date as ISODate, undefined)
+          if (!billId) return
+          complete(reminder.id, null, v.date as ISODate, undefined, billId)
           onDone()
           return
         }

@@ -13,6 +13,7 @@ import {
   transactionsInMonth,
 } from '@/lib/finance'
 import { todayISO } from '@/lib/dates'
+import { installmentDebt } from '@/lib/recovery'
 import { areaOf } from '@/lib/reports'
 
 /** Agrega todos os dados derivados do dashboard para o mês selecionado. */
@@ -20,7 +21,7 @@ export function useDashboardData() {
   const { transactions, categories } = useFinanceStore(
     useShallow((s) => ({ transactions: s.transactions, categories: s.categories })),
   )
-  const { openingBalance, notifications } = useSettingsStore((s) => s.settings)
+  const { openingBalance, notifications, fixedSeries } = useSettingsStore((s) => s.settings)
   const month = useUIStore((s) => s.selectedMonth)
 
   return useMemo(() => {
@@ -36,6 +37,7 @@ export function useDashboardData() {
       /** Despesas do mês ainda não pagas */
       toPay: expenses.filter((t) => t.status !== 'pago').reduce((a, t) => a + t.amount, 0),
       byArea,
+      installmentDebt: installmentDebt(transactions, fixedSeries),
       dueSoonDays: notifications.dueSoonDays,
       summary: computeMonthSummary(transactions, month, openingBalance, today),
       alerts: computeDueAlerts(transactions, today, notifications.dueSoonDays),
@@ -44,5 +46,5 @@ export function useDashboardData() {
       monthlySeries: computeMonthlySeries(transactions, month, 12),
       payees: computePayeeBalances(transactions, month, today),
     }
-  }, [transactions, categories, month, openingBalance, notifications.dueSoonDays])
+  }, [transactions, categories, month, openingBalance, notifications.dueSoonDays, fixedSeries])
 }

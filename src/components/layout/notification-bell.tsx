@@ -1,5 +1,5 @@
 import { Bell, BellOff, Check, ChevronRight, Loader2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { HandleDialog } from '@/components/shared/shared-ui'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,7 @@ import { acknowledgeSharedBill, respondSharedBill } from '@/lib/shared-cloud'
 import { cn } from '@/lib/utils'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { useFinanceStore } from '@/store/finance-store'
-import { useSettingsStore } from '@/store/settings-store'
+import { NO_AUTO_ACCEPT, useSettingsStore } from '@/store/settings-store'
 import { useSharedStore } from '@/store/shared-store'
 import { useUIStore } from '@/store/ui-store'
 
@@ -40,12 +40,16 @@ function useNotifications(): AppNotification[] {
     useShallow((s) => ({ transactions: s.transactions, maintenance: s.maintenance, vehicles: s.vehicles })),
   )
   const dueSoonDays = useSettingsStore((s) => s.settings.notifications.dueSoonDays)
+  const autoAccept = useSettingsStore((s) => s.settings.autoAcceptFrom ?? NO_AUTO_ACCEPT)
+  const autoAcceptIds = useMemo(() => new Set(autoAccept.map((p) => p.uid)), [autoAccept])
   return buildNotifications({
     uid,
     bills: shared.bills,
     handle: shared.handle,
     handleLoaded: shared.handleLoaded,
     rulesMissing: shared.rulesMissing,
+    autoAccept: autoAcceptIds,
+    incoming: shared.incoming,
     transactions,
     maintenance,
     vehicles,

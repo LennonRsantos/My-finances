@@ -1,5 +1,4 @@
 import { Car, Download, House, Layers, TrendingDown, TrendingUp, Wallet, type LucideIcon } from 'lucide-react'
-import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { MonthlyComparison } from '@/components/dashboard/monthly-comparison'
 import { MonthSelector } from '@/components/dashboard/month-selector'
@@ -10,7 +9,8 @@ import { formatDateShort, formatMonthLabel, todayISO } from '@/lib/dates'
 import { computeMonthlySeries } from '@/lib/finance'
 import { categoryIconMap } from '@/lib/icons'
 import { formatMoney } from '@/lib/money'
-import { buildReport, toCSV, type Area, type ReportPeriod } from '@/lib/reports'
+import { useReportPeriod } from '@/hooks/use-saved-filters'
+import { buildReport, toCSV, type Area } from '@/lib/reports'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
@@ -41,7 +41,7 @@ export function ReportsPage() {
   )
   const month = useUIStore((s) => s.selectedMonth)
   const setView = useUIStore((s) => s.setView)
-  const [period, setPeriod] = useState<ReportPeriod>('mes')
+  const [period, setPeriod] = useReportPeriod()
   const today = todayISO()
   const report = buildReport(transactions, month, period, today)
   const categoryById = new Map(categories.map((c) => [c.id, c]))

@@ -14,11 +14,22 @@ export type EditScope = 'one' | 'future'
 
 export type TransactionEdit = Pick<
   Transaction,
-  'description' | 'amount' | 'categoryId' | 'subcategoryId' | 'dueDate' | 'paymentMethod' | 'status' | 'paymentDate' | 'payTo' | 'notes'
+  | 'description'
+  | 'amount'
+  | 'categoryId'
+  | 'subcategoryId'
+  | 'dueDate'
+  | 'paymentMethod'
+  | 'status'
+  | 'paymentDate'
+  | 'payTo'
+  | 'payToUid'
+  | 'payToHandle'
+  | 'notes'
 >
 
 /** Campos que se propagam para as próximas ocorrências da série. */
-const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'notes'] as const
+const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
@@ -44,12 +55,17 @@ interface FinanceData {
 interface FinanceState extends FinanceData {
   addTransaction: (t: Transaction) => void
   addInstallmentPurchase: (input: InstallmentPurchaseInput) => Installment
+  /** Grava parcelamento já gerado por `generateInstallments` (ids conhecidos antes, ex.: convite de divisão). */
+  saveInstallmentPurchase: (generated: { installment: Installment; transactions: Transaction[] }) => void
   /** Cadastra gasto/receita fixo e lança os próximos meses. */
   addRecurringCost: (rc: RecurringCost, firstPaid: boolean) => void
   /** Lança meses novos dos fixos ativos (rodar ao abrir o app). */
   materializeRecurring: () => void
-  /** Encerra o fixo e apaga ocorrências futuras ainda pendentes. */
-  endRecurringCost: (id: RecurringCost['id']) => void
+  /**
+   * Encerra o fixo e apaga ocorrências futuras ainda pendentes. Com `from`,
+   * o último mês é o anterior a essa data (ocorrências pendentes desde ela somem).
+   */
+  endRecurringCost: (id: RecurringCost['id'], from?: ISODate) => void
   /**
    * Edita um fixo. Os meses ainda não pagos (do atual em diante) são
    * refeitos com os novos dados; meses pagos e passados ficam como estão.
@@ -94,8 +110,13 @@ interface FinanceState extends FinanceData {
   addVehicleExpense: (t: Transaction) => void
   saveReminder: (r: MaintenanceReminder) => void
   removeReminder: (id: MaintenanceReminder['id']) => void
-  /** Marca a manutenção como feita; com `expense`, lança o gasto também. */
-  completeReminder: (id: MaintenanceReminder['id'], km: number | null, date: ISODate, expense?: Transaction) => void
+  /**
+   * Marca a manutenção como feita; com `expense`, lança o gasto também.
+   * `sharedBillId`: convite de divisão enviado junto (cancelado ao desfazer).
+   */
+  completeReminder: (id: MaintenanceReminder['id'], km: number | null, date: ISODate, expense?: Transaction, sharedBillId?: string) => void
+  /** Volta a última marcação de feita: km e data anteriores, sem o gasto lançado junto. */
+  undoReminder: (id: MaintenanceReminder['id']) => void
 }
 
 /** Começa vazio, só com as categorias padrão. */
@@ -171,10 +192,13 @@ export const useFinanceStore = create<FinanceState>()(
         addTransaction: (t) => commit({ upserts: txWrites([t]) }),
 
         addInstallmentPurchase: (input) => {
-          const { installment, transactions } = generateInstallments(input)
-          commit({ upserts: [{ name: 'installments', data: installment }, ...txWrites(transactions)] })
-          return installment
+          const generated = generateInstallments(input)
+          get().saveInstallmentPurchase(generated)
+          return generated.installment
         },
+
+        saveInstallmentPurchase: ({ installment, transactions }) =>
+          commit({ upserts: [{ name: 'installments', data: installment }, ...txWrites(transactions)] }),
 
         addRecurringCost: (rc, firstPaid) => {
           const { transactions, lastGeneratedMonth } = pendingOccurrences(rc)
@@ -196,15 +220,16 @@ export const useFinanceStore = create<FinanceState>()(
           if (upserts.length) commit({ upserts })
         },
 
-        endRecurringCost: (id) => {
+        endRecurringCost: (id, from) => {
           const rc = get().recurringCosts.find((x) => x.id === id)
           if (!rc) return
           const today = todayISO()
           const futurePending = get().transactions.filter(
-            (t) => t.recurringCostId === id && t.status !== 'pago' && t.dueDate > today,
+            (t) => t.recurringCostId === id && t.status !== 'pago' && (from ? t.dueDate >= from : t.dueDate > today),
           )
+          const endDate = from ? addDaysISO(from, -1) : today
           commit({
-            upserts: [{ name: 'recurringCosts', data: { ...rc, active: false, endDate: today } }],
+            upserts: [{ name: 'recurringCosts', data: { ...rc, active: false, endDate } }],
             deletes: futurePending.map((t) => ({ name: 'transactions', id: t.id })),
           })
         },
@@ -267,7 +292,7 @@ export const useFinanceStore = create<FinanceState>()(
             if (inst) {
               upserts.push({
                 name: 'installments',
-                data: { ...inst, description: base, categoryId: patch.categoryId, subcategoryId: patch.subcategoryId, paymentMethod: patch.paymentMethod ?? inst.paymentMethod, payTo: patch.payTo ?? null },
+                data: { ...inst, description: base, categoryId: patch.categoryId, subcategoryId: patch.subcategoryId, paymentMethod: patch.paymentMethod ?? inst.paymentMethod, payTo: patch.payTo ?? null, payToUid: patch.payToUid ?? null, payToHandle: patch.payToHandle ?? null },
               })
             }
             const rc = t.recurringCostId && recurringCosts.find((r) => r.id === t.recurringCostId)
@@ -403,15 +428,25 @@ export const useFinanceStore = create<FinanceState>()(
 
         removeReminder: (id) => commit({ deletes: [{ name: 'maintenance', id }] }),
 
-        completeReminder: (id, km, date, expense) => {
+        completeReminder: (id, km, date, expense, sharedBillId) => {
           const r = get().maintenance.find((x) => x.id === id)
           if (!r) return
+          const undo = { lastKm: r.lastKm, lastDate: r.lastDate, transactionId: expense?.id ?? null, sharedBillId: sharedBillId ?? null }
           commit({
             upserts: [
-              { name: 'maintenance', data: { ...r, lastKm: km ?? r.lastKm, lastDate: date } },
+              { name: 'maintenance', data: { ...r, lastKm: km ?? r.lastKm, lastDate: date, undo } },
               ...(expense ? [...vehicleCategoryWrites(get()), ...txWrites([expense])] : []),
             ],
           })
+        },
+
+        undoReminder: (id) => {
+          const { maintenance, transactions } = get()
+          const r = maintenance.find((x) => x.id === id)
+          if (!r?.undo) return
+          const { lastKm, lastDate, transactionId } = r.undo
+          const tx = transactionId && transactions.some((t) => t.id === transactionId) ? [{ name: 'transactions' as const, id: transactionId }] : []
+          commit({ upserts: [{ name: 'maintenance', data: { ...r, lastKm, lastDate, undo: null } }], deletes: tx })
         },
       }
     },

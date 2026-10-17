@@ -2,18 +2,13 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { resolveStatus } from '@/lib/finance'
-import type { Category, ISODate, Transaction, TransactionStatus, TransactionType } from '@/types/finance'
+import { useSettingsStore } from '@/store/settings-store'
+import { DEFAULT_TX_FILTERS } from '@/store/ui-store'
+import type { Category, ISODate, SortKey, Transaction, TransactionFilters as Filters, TransactionStatus, TransactionType } from '@/types/finance'
 
-export type SortKey = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc'
+export type { SortKey, Filters }
 
-export interface Filters {
-  sort: SortKey
-  /** `all` ou id da categoria */
-  categoryId: string
-  status: TransactionStatus | 'all'
-}
-
-export const DEFAULT_FILTERS: Filters = { sort: 'date_desc', categoryId: 'all', status: 'all' }
+export const DEFAULT_FILTERS: Filters = DEFAULT_TX_FILTERS
 
 const SORT_LABELS: Record<SortKey, string> = {
   date_desc: 'Data: mais recente',
@@ -65,6 +60,7 @@ export function TransactionFilters({
           ['atrasado', 'Atrasado'],
         ]
   const count = activeFilterCount(value)
+  const keep = useSettingsStore((s) => !!s.settings.keepFilters)
 
   return (
     <div className="flex flex-col gap-2">
@@ -117,10 +113,15 @@ export function TransactionFilters({
         </Select>
       </div>
 
-      {count > 0 && (
-        <Button variant="ghost" size="sm" className="self-start text-muted-foreground" onClick={() => onChange(DEFAULT_FILTERS)}>
-          <X /> Limpar filtros ({count})
-        </Button>
+      {(count > 0 || keep) && (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          {count > 0 && (
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => onChange(DEFAULT_FILTERS)}>
+              <X /> Limpar filtros ({count})
+            </Button>
+          )}
+          {keep && <span className="px-2 text-xs text-muted-foreground">Filtros salvos · mude em Configurações &gt; Preferências</span>}
+        </div>
       )}
     </div>
   )

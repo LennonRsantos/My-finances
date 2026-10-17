@@ -132,6 +132,10 @@ export interface Transaction {
   recurringCostId: RecurringCost['id'] | null
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
+  /** Usuário do app que recebe (`payTo` vira o nome mostrado); ausente = nome livre */
+  payToUid?: string | null
+  /** @ desse usuário, sem o "@" */
+  payToHandle?: string | null
   notes?: string
   /** Veículo a que o gasto pertence (aba Veículo) */
   vehicleId?: Vehicle['id'] | null
@@ -175,6 +179,10 @@ interface RecurringCostBase {
   lastGeneratedMonth: YearMonth | null
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
+  /** Usuário do app que recebe (`payTo` vira o nome mostrado); ausente = nome livre */
+  payToUid?: string | null
+  /** @ desse usuário, sem o "@" */
+  payToHandle?: string | null
   /** Veículo (ex.: IPVA, seguro); passa para as ocorrências geradas */
   vehicleId?: Vehicle['id'] | null
   createdAt: string
@@ -213,6 +221,10 @@ export interface Installment {
   accountName: string
   /** Pessoa para quem o valor deve ser enviado (ex.: "Isadora"); ausente = ninguém */
   payTo?: string | null
+  /** Usuário do app que recebe (`payTo` vira o nome mostrado); ausente = nome livre */
+  payToUid?: string | null
+  /** @ desse usuário, sem o "@" */
+  payToHandle?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +280,18 @@ export interface MaintenanceReminder {
   lastDate: ISODate | null
   /** Quanto costuma custar, para calcular a reserva mensal */
   estimatedCost?: Cents | null
+  /** Como estava antes da última vez marcada como feita, para desfazer. */
+  undo?: MaintenanceUndo | null
   createdAt: string
+}
+
+export interface MaintenanceUndo {
+  lastKm: number | null
+  lastDate: ISODate | null
+  /** Gasto lançado junto ao marcar como feita */
+  transactionId: Transaction['id'] | null
+  /** Convite de divisão enviado junto ao marcar como feita */
+  sharedBillId: string | null
 }
 
 export const FUEL_LABELS: Record<FuelType, string> = {
@@ -307,6 +330,13 @@ export interface SharedBillParticipant {
   status: SharedParticipantStatus
 }
 
+export interface SharedBillReplaces {
+  /** Lançamentos não pagos que dão lugar às parcelas divididas */
+  transactionIds: string[]
+  /** Fixo que deixa de gerar meses a partir do 1º vencimento da conta */
+  recurringCostId?: string | null
+}
+
 /** Conta mãe, em `sharedBills/{id}` (fora de `users/`, lida pelos dois participantes). */
 export interface SharedBill {
   id: ID
@@ -320,6 +350,11 @@ export interface SharedBill {
   subcategoryId?: Subcategory['id'] | null
   /** Veículo do criador; só o lado do criador liga as parcelas a ele */
   vehicleId?: string | null
+  /**
+   * Lançamentos do criador que esta conta substitui (dividir algo já lançado):
+   * somem do lado do criador quando o convite é aceito.
+   */
+  replaces?: SharedBillReplaces | null
   payerType: SharedPayerType
   status: SharedBillStatus
   createdBy: string
@@ -373,6 +408,59 @@ export interface UserSettings {
   /** Saldo inicial da conta antes do primeiro lançamento */
   openingBalance: Cents
   notifications: NotificationPreferences
+  /**
+   * Parcelamentos que na verdade são contas fixas (ex.: aluguel dividido em
+   * 12x): não entram no saldo devedor. Guarda `installment.installmentId`.
+   */
+  fixedSeries?: string[]
+  /** Lançamentos e Relatórios abrem com os últimos filtros usados */
+  keepFilters?: boolean
+  /** Filtros guardados quando `keepFilters` está ligado (`null` = nenhum) */
+  savedFilters?: SavedFilters | null
+  /** Pessoas cujas contas divididas entram sem pedir aceite */
+  autoAcceptFrom?: AutoAcceptPerson[]
+}
+
+/**
+ * Espelho de um lançamento "Enviar para @usuário", em `transfers/{fromUid}_{txId}`:
+ * quem recebe vê quanto a outra pessoa deve enviar. Só quem deve escreve.
+ */
+export interface Transfer {
+  id: string
+  txId: string
+  fromUid: string
+  fromHandle: string | null
+  fromName: string | null
+  toUid: string
+  amount: Cents
+  dueDate: ISODate
+  description: string
+  /** SENT = quem deve marcou como enviado */
+  status: 'PENDING' | 'SENT'
+  updatedAt: string
+}
+
+export interface AutoAcceptPerson {
+  uid: string
+  /** @ sem o "@" */
+  handle: string
+  name: string | null
+}
+
+export type SortKey = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc'
+
+/** Filtros da lista de Lançamentos. */
+export interface TransactionFilters {
+  sort: SortKey
+  /** `all` ou id da categoria */
+  categoryId: string
+  status: TransactionStatus | 'all'
+}
+
+export interface SavedFilters {
+  despesa?: TransactionFilters
+  receita?: TransactionFilters
+  reportPeriod?: 'mes' | 'ano'
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +479,8 @@ export interface MonthSummary {
 /** Quanto falta enviar para uma pessoa. */
 export interface PayeeBalance {
   name: string
+  /** @ do usuário do app que recebe (ele vê este valor); `null` = nome livre */
+  handle: string | null
   /** Pendente com vencimento até o fim do mês selecionado (inclui atrasados) */
   dueThisMonth: Cents
   /** Todo o pendente, inclusive meses futuros */

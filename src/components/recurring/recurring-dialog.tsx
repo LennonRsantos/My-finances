@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
+import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
@@ -11,6 +12,7 @@ import { Input, Label } from '@/components/ui/input'
 import { currentYearMonth } from '@/lib/dates'
 import { cents, money } from '@/lib/form-fields'
 import { formatMoney, fromCents } from '@/lib/money'
+import { useAuthStore } from '@/store/auth-store'
 import { useFinanceStore } from '@/store/finance-store'
 import { PAYMENT_METHODS, type PaymentMethod, type RecurringCost } from '@/types/finance'
 
@@ -41,6 +43,13 @@ function RecurringForm({ rc, onDone }: { rc: RecurringCost; onDone: () => void }
   })
   const [paymentMethod, frequency] = useWatch({ control, name: ['paymentMethod', 'frequency'] })
   const yearly = frequency === 'anual'
+  // Dividir parte da próxima ocorrência ainda não paga (mensal: 12 meses dali em diante).
+  const signedIn = useAuthStore((s) => s.status === 'signed_in')
+  const next = useFinanceStore((s) =>
+    s.transactions
+      .filter((t) => t.recurringCostId === rc.id && t.status !== 'pago')
+      .reduce<(typeof s.transactions)[number] | undefined>((min, t) => (!min || t.dueDate < min.dueDate ? t : min), undefined),
+  )
   const e = formState.errors
 
   return (
@@ -109,6 +118,7 @@ function RecurringForm({ rc, onDone }: { rc: RecurringCost; onDone: () => void }
         <p className="text-xs text-muted-foreground">
           A mudança vale do mês atual em diante, nos meses ainda não pagos. O que já foi pago continua igual.
         </p>
+        {next && canShareExisting(next, signedIn) && <ShareExisting transaction={next} />}
       </div>
       {confirmDelete ? (
         <div className="flex flex-col gap-2 border-t px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">

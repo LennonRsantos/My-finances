@@ -6,7 +6,16 @@ import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ShareFields, sendShareInvite, useShare } from '@/components/shared/share-fields'
+import {
+  SHARED_FIXED_MONTHS,
+  ShareFields,
+  useSharedRole,
+  fixedShareNote,
+  sendShareInvite,
+  useShare,
+  yearlyShareNote,
+} from '@/components/shared/share-fields'
+import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -30,6 +39,10 @@ import {
   VEHICLE_CATEGORY_ID,
   type DocumentPreset,
 } from '@/lib/vehicle'
+import { cancelSharedBill } from '@/lib/shared-cloud'
+import { generateInstallments } from '@/lib/finance'
+import { pendingOccurrences } from '@/lib/recurring'
+import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { useFinanceStore } from '@/store/finance-store'
 import {
   FUEL_LABELS,
@@ -59,6 +72,9 @@ export type VehicleDialogState =
 // ---------------------------------------------------------------------------
 // Peças de formulário
 // ---------------------------------------------------------------------------
+
+/** Dividir algo novo: já entra no seu nome e é trocado pela parte dividida no aceite. */
+const pendingShareNote = 'Já entra nas suas contas; quando a pessoa aceitar, vira a parte dividida. Se recusar, fica com você.'
 
 /** Lançamento de veículo pago na data. */
 function expense(
@@ -287,6 +303,7 @@ const keepIdentity = (original: Transaction | undefined, next: Transaction): Tra
 function EditActions({ submitLabel, transaction, onDone }: { submitLabel: string; transaction?: Transaction; onDone: () => void }) {
   const remove = useFinanceStore((s) => s.removeTransaction)
   const [confirm, setConfirm] = useState(false)
+  const shared = useSharedRole(transaction)
   if (!transaction) return <FormActions submitLabel={submitLabel} />
   if (confirm)
     return (
@@ -299,11 +316,13 @@ function EditActions({ submitLabel, transaction, onDone }: { submitLabel: string
           variant="expense"
           className="flex-1"
           onClick={() => {
-            remove(transaction.id)
+            // Conta dividida criada por mim: cancela para os dois.
+            if (shared?.role === 'creator') cancelSharedBill(shared.bill).catch(reportSyncError)
+            else remove(transaction.id)
             onDone()
           }}
         >
-          Confirmar exclusão
+          {shared?.role === 'creator' ? 'Cancelar para os dois' : 'Confirmar exclusão'}
         </Button>
       </div>
     )
@@ -311,9 +330,11 @@ function EditActions({ submitLabel, transaction, onDone }: { submitLabel: string
     <FormActions
       submitLabel={submitLabel}
       extra={
-        <Button type="button" variant="outline" size="icon" className="text-expense" aria-label="Excluir" onClick={() => setConfirm(true)}>
-          <Trash2 />
-        </Button>
+        shared?.role === 'invitee' ? undefined : (
+          <Button type="button" variant="outline" size="icon" className="text-expense" aria-label={shared ? 'Cancelar conta dividida' : 'Excluir'} onClick={() => setConfirm(true)}>
+            <Trash2 />
+          </Button>
+        )
       }
     />
   )
@@ -473,6 +494,7 @@ function ExpenseForm({
     .map((sc) => ({ value: sc.id, label: sc.name }))
   const initialLabel = options.find((o) => o.value === initialSub)?.label ?? ''
   const { share, setShare, available: shareAvailable } = useShare()
+  const signedIn = useAuthStore((s) => s.status === 'signed_in')
   const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(expenseSchema),
     defaultValues: transaction
@@ -496,6 +518,7 @@ function ExpenseForm({
         },
   })
   const [subcategoryId, paid, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'paid', 'paymentMethod'] })
+  const sharing = !transaction && shareAvailable && share.on
   const e = formState.errors
 
   return (
@@ -503,20 +526,6 @@ function ExpenseForm({
       noValidate
       className={formClass}
       onSubmit={handleSubmit(async (v) => {
-        if (!transaction && shareAvailable && share.on) {
-          const result = await sendShareInvite(share, {
-            title: v.description,
-            totalAmount: cents(v.amount),
-            installments: 1,
-            firstDueDate: v.date as ISODate,
-            categoryId: VEHICLE_CATEGORY_ID,
-            subcategoryId: v.subcategoryId,
-            vehicleId: vehicle.id,
-          })
-          if ('error' in result) return setShare({ ...share, error: result.error })
-          onDone()
-          return
-        }
         const next = keepIdentity(
           transaction,
           expense(vehicle, {
@@ -526,9 +535,23 @@ function ExpenseForm({
             dueDate: v.date as ISODate,
             paymentMethod: v.paymentMethod,
             odometer: toKm(v.odometer),
-            paid: v.paid,
+            // Dividido: fica pendente no seu nome até a pessoa aceitar; aí vira a parte dividida.
+            paid: v.paid && !sharing,
           }),
         )
+        if (sharing) {
+          const result = await sendShareInvite(share, {
+            title: v.description,
+            totalAmount: cents(v.amount),
+            installments: 1,
+            firstDueDate: v.date as ISODate,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: v.subcategoryId,
+            vehicleId: vehicle.id,
+            replaces: { transactionIds: [next.id] },
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+        }
         if (transaction) save(next)
         else add(next)
         onDone()
@@ -569,17 +592,20 @@ function ExpenseForm({
             <Input id="e-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.odometer} {...register('odometer')} />
           </Affix>
         </Field>
-        <label className="flex items-center justify-between gap-3">
-          <span className="text-sm font-medium">Já pago</span>
-          <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label="Já pago" />
-        </label>
+        {!sharing && (
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Já pago</span>
+            <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label="Já pago" />
+          </label>
+        )}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
-        {!transaction && shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir este gasto" />}
+        {!transaction && shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir este gasto" note={pendingShareNote} />}
+        {transaction && canShareExisting(transaction, signedIn) && <ShareExisting transaction={transaction} />}
       </div>
-      <EditActions submitLabel={!transaction && share.on ? 'Enviar convite' : 'Salvar gasto'} transaction={transaction} onDone={onDone} />
+      <EditActions submitLabel={sharing ? 'Salvar e enviar convite' : 'Salvar gasto'} transaction={transaction} onDone={onDone} />
     </form>
   )
 }
@@ -772,24 +798,42 @@ const completeSchema = z.object({ km, date, amount: optionalMoney, paymentMethod
 
 function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehicle; currentKm: number; reminder: MaintenanceReminder; onDone: () => void }) {
   const complete = useFinanceStore((s) => s.completeReminder)
+  const { share, setShare, available: shareAvailable } = useShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(completeSchema),
     defaultValues: { km: String(currentKm), date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod },
   })
-  const paymentMethod = useWatch({ control, name: 'paymentMethod' })
+  const [paymentMethod, amount] = useWatch({ control, name: ['paymentMethod', 'amount'] })
+  const sharing = shareAvailable && share.on && cents(amount) > 0
   const e = formState.errors
 
   return (
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const value = v.amount ? cents(v.amount) : 0
+        // Dividido: o custo vira convite; a manutenção é marcada como feita do mesmo jeito.
+        const shared = sharing && value > 0
+        let sharedBillId: string | undefined
+        if (shared) {
+          const result = await sendShareInvite(share, {
+            title: reminder.name,
+            totalAmount: value,
+            installments: 1,
+            firstDueDate: v.date as ISODate,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: MAINTENANCE_SUBCATEGORY_ID,
+            vehicleId: vehicle.id,
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+          sharedBillId = result.id
+        }
         complete(
           reminder.id,
           toKm(v.km),
           v.date as ISODate,
-          value > 0
+          value > 0 && !shared
             ? expense(vehicle, {
                 description: reminder.name,
                 amount: value,
@@ -800,6 +844,7 @@ function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehic
                 paid: true,
               })
             : undefined,
+          sharedBillId,
         )
         onDone()
       })}
@@ -824,8 +869,9 @@ function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehic
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
+        {shareAvailable && cents(amount) > 0 && <ShareFields share={share} onChange={setShare} label="Dividir o custo" />}
       </div>
-      <FormActions submitLabel="Marcar como feita" />
+      <FormActions submitLabel={sharing ? 'Enviar convite e marcar feita' : 'Marcar como feita'} />
     </form>
   )
 }
@@ -843,6 +889,7 @@ const documentSchema = z.object({
 
 function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: DocumentPreset; onDone: () => void }) {
   const addRecurringCost = useFinanceStore((s) => s.addRecurringCost)
+  const { share, setShare, available: shareAvailable } = useShare()
   const meta = DOCUMENT_PRESETS[preset]
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(documentSchema),
@@ -856,7 +903,7 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
     <form
       noValidate
       className={formClass}
-      onSubmit={handleSubmit((v) => {
+      onSubmit={handleSubmit(async (v) => {
         const due = v.date as ISODate
         const base: Omit<RecurringCost, 'frequency' | 'dueMonth'> = {
           id: createId(),
@@ -879,6 +926,23 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
         }
         const rc: RecurringCost =
           v.frequency === 'mensal' ? { ...base, frequency: 'mensal' } : { ...base, frequency: 'anual', dueMonth: Number(due.slice(5, 7)) }
+        if (shareAvailable && share.on) {
+          // Mensal: convite de 12 meses (o fixo para no aceite); anual: só este vencimento.
+          const monthlyShare = rc.frequency === 'mensal'
+          const count = monthlyShare ? SHARED_FIXED_MONTHS : 1
+          const ids = pendingOccurrences(rc).transactions.map((t) => t.id)
+          const result = await sendShareInvite(share, {
+            title: rc.description,
+            totalAmount: cents(v.amount) * count,
+            installments: count,
+            firstDueDate: due,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: meta.subcategoryId,
+            vehicleId: vehicle.id,
+            replaces: monthlyShare ? { transactionIds: ids, recurringCostId: rc.id } : { transactionIds: ids.slice(0, 1) },
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+        }
         addRecurringCost(rc, false)
         onDone()
       })}
@@ -915,8 +979,16 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
+        {shareAvailable && (
+          <ShareFields
+            share={share}
+            onChange={setShare}
+            label={`Dividir ${meta.label}`}
+            note={`${monthly ? fixedShareNote : yearlyShareNote} ${pendingShareNote}`}
+          />
+        )}
       </div>
-      <FormActions submitLabel={`Cadastrar ${meta.label}`} />
+      <FormActions submitLabel={shareAvailable && share.on ? 'Cadastrar e enviar convite' : `Cadastrar ${meta.label}`} />
     </form>
   )
 }
@@ -942,7 +1014,7 @@ const financingSchema = z
 const FINANCING_KINDS = { financiamento: 'Financiamento', consorcio: 'Consórcio', emprestimo: 'Empréstimo' } as const
 
 function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => void }) {
-  const add = useFinanceStore((s) => s.addInstallmentPurchase)
+  const save = useFinanceStore((s) => s.saveInstallmentPurchase)
   const { share, setShare, available: shareAvailable } = useShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(financingSchema),
@@ -970,22 +1042,8 @@ function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => vo
         const N = Number(v.total)
         const rest = N - n + 1
         const title = `${FINANCING_KINDS[v.kind]}${v.bank ? ` ${v.bank}` : ''} · ${vehicle.name}`
-        if (shareAvailable && share.on) {
-          // Dividido: o convite cobre só as parcelas que faltam.
-          const result = await sendShareInvite(share, {
-            title,
-            totalAmount: cents(v.amount) * rest,
-            installments: rest,
-            firstDueDate: v.date as ISODate,
-            categoryId: VEHICLE_CATEGORY_ID,
-            subcategoryId: VEHICLE_FINANCING_SUBCATEGORY_ID,
-            vehicleId: vehicle.id,
-          })
-          if ('error' in result) return setShare({ ...share, error: result.error })
-          onDone()
-          return
-        }
-        add({
+        // As parcelas entram já; dividido, o convite cobre as que faltam e as troca no aceite.
+        const generated = generateInstallments({
           description: title,
           totalAmount: cents(v.amount) * N,
           totalInstallments: N,
@@ -997,6 +1055,20 @@ function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => vo
           accountName: v.bank || FINANCING_KINDS[v.kind],
           vehicleId: vehicle.id,
         })
+        if (shareAvailable && share.on) {
+          const result = await sendShareInvite(share, {
+            title,
+            totalAmount: cents(v.amount) * rest,
+            installments: rest,
+            firstDueDate: v.date as ISODate,
+            categoryId: VEHICLE_CATEGORY_ID,
+            subcategoryId: VEHICLE_FINANCING_SUBCATEGORY_ID,
+            vehicleId: vehicle.id,
+            replaces: { transactionIds: generated.transactions.map((t) => t.id) },
+          })
+          if ('error' in result) return setShare({ ...share, error: result.error })
+        }
+        save(generated)
         onDone()
       })}
     >
@@ -1040,9 +1112,9 @@ function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => vo
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
         </div>
-        {shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir as parcelas" />}
+        {shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir as parcelas" note={pendingShareNote} />}
       </div>
-      <FormActions submitLabel={shareAvailable && share.on ? 'Enviar convite' : 'Salvar'} />
+      <FormActions submitLabel={shareAvailable && share.on ? 'Salvar e enviar convite' : 'Salvar'} />
     </form>
   )
 }

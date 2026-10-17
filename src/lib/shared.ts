@@ -100,6 +100,8 @@ export function buildSharedTransactions(bill: SharedBill, uid: string, now: stri
       installment: bill.installments > 1 ? { installmentId: sharedInstallmentId(bill.id, uid), number: n, total: bill.installments } : null,
       recurringCostId: null,
       payTo: reimbursing ? displayName(partner) : null,
+      payToUid: reimbursing ? partner.userId : null,
+      payToHandle: reimbursing ? partner.handle : null,
       sharedBillId: bill.id,
       // O convidado não tem o veículo do criador: a parcela dele fica só na categoria.
       vehicleId: me.role === 'creator' ? (bill.vehicleId ?? null) : null,
@@ -155,9 +157,51 @@ export function reconcileShared(bill: SharedBill, uid: string, mine: Transaction
   return upserts.length || deletes.length ? { upserts, deletes } : none
 }
 
-/** Convites que esperam a minha resposta. */
-export const pendingInvites = (bills: SharedBill[], uid: string) =>
-  bills.filter((b) => b.status === 'PENDING' && b.invitedUid === uid)
+export interface Replacement {
+  /** Lançamentos originais (não pagos) a apagar */
+  deletes: Transaction['id'][]
+  /** Fixo a encerrar a partir do 1º vencimento da conta dividida */
+  endRecurring: { id: string; from: ISODate } | null
+}
+
+/**
+ * Dividir algo já lançado: quando o convite é aceito, o criador troca os
+ * lançamentos originais pelas parcelas divididas. Pagos ficam como estão.
+ */
+export function replacedBy(bill: SharedBill, uid: string, mine: Transaction[], activeRecurring: ReadonlySet<string>): Replacement | null {
+  if (bill.status !== 'ACCEPTED' || bill.createdBy !== uid || !bill.replaces) return null
+  const ids = new Set(bill.replaces.transactionIds)
+  const deletes = mine.filter((t) => ids.has(t.id) && t.status !== 'pago' && !t.sharedBillId).map((t) => t.id)
+  const rc = bill.replaces.recurringCostId
+  const endRecurring = rc && activeRecurring.has(rc) ? { id: rc, from: bill.firstDueDate } : null
+  return deletes.length || endRecurring ? { deletes, endRecurring } : null
+}
+
+/** Convite de alguém que eu deixei no aceite automático: aceito sem perguntar. */
+export const autoAcceptable = (bill: SharedBill, uid: string, allowed: ReadonlySet<string>) =>
+  bill.status === 'PENDING' && bill.invitedUid === uid && allowed.has(bill.createdBy)
+
+/** Convites que esperam a minha resposta (os do aceite automático não contam). */
+export const pendingInvites = (bills: SharedBill[], uid: string, allowed: ReadonlySet<string> = new Set()) =>
+  bills.filter((b) => b.status === 'PENDING' && b.invitedUid === uid && !allowed.has(b.createdBy))
+
+export interface SharedRole {
+  role: 'creator' | 'invitee'
+  bill: SharedBill
+  /** @ da outra pessoa */
+  partner: string
+}
+
+/**
+ * Papel no lançamento de conta dividida. Criador pode cancelar a conta (some
+ * para os dois); convidado não. `null` se não é dividido ou a conta não chegou.
+ */
+export function sharedRole(t: Pick<Transaction, 'sharedBillId'>, bills: SharedBill[], uid: string | null): SharedRole | null {
+  if (!t.sharedBillId || !uid) return null
+  const bill = bills.find((b) => b.id === t.sharedBillId)
+  if (!bill || bill.status === 'CANCELLED' || bill.status === 'REJECTED') return null
+  return { role: bill.createdBy === uid ? 'creator' : 'invitee', bill, partner: partnerOf(bill, uid)?.handle ?? '' }
+}
 
 /** Recusas que o criador ainda não viu. */
 export const unseenRejections = (bills: SharedBill[], uid: string) =>

@@ -51,6 +51,7 @@ import { parseMoneyInput } from '@/lib/schemas'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useRecoveryStore } from '@/store/recovery-store'
+import { useSettingsStore } from '@/store/settings-store'
 import { useUIStore } from '@/store/ui-store'
 import type { Debt, DebtStrategy, RecurringCost, YearMonth } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
@@ -677,11 +678,15 @@ export function RecoveryPage() {
   const today = todayISO()
   const [tab, setTab] = useState<'diagnostico' | 'cortes' | 'dividas'>('diagnostico')
 
-  const diagnosis = useMemo(() => computeDiagnosis(transactions, categories, currentYearMonth(), today), [transactions, categories, today])
+  const fixedSeries = useSettingsStore((s) => s.settings.fixedSeries)
+  const diagnosis = useMemo(
+    () => computeDiagnosis(transactions, categories, currentYearMonth(), today, 3, fixedSeries),
+    [transactions, categories, today, fixedSeries],
+  )
   const health = healthOf(diagnosis)
   const cancellable = useMemo(() => cancellableCosts(recurringCosts), [recurringCosts])
   const result = useMemo(() => evaluatePlan(diagnosis, plan, recurringCosts), [diagnosis, plan, recurringCosts])
-  const ending = useMemo(() => endingInstallments(transactions), [transactions])
+  const ending = useMemo(() => endingInstallments(transactions, fixedSeries), [transactions, fixedSeries])
   const payoff = useMemo(
     () => (debts.length ? simulatePayoff(debts, sumMinimums(debts) + (debtExtra ?? Math.max(0, result.newBalance)), strategy) : null),
     [debts, debtExtra, result.newBalance, strategy],

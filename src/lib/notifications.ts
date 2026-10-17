@@ -2,12 +2,13 @@
  * Avisos do sino: convites e recusas de contas compartilhadas, contas a
  * vencer/atrasadas e manutenções (veículo e casa) perto do vencimento.
  */
-import type { Cents, ISODate, MaintenanceReminder, SharedBill, Transaction, Vehicle } from '@/types/finance'
+import type { Cents, ISODate, MaintenanceReminder, SharedBill, Transaction, Transfer, Vehicle } from '@/types/finance'
+import { addDaysISO, formatDateShort } from './dates'
 import { computeDueAlerts } from './finance'
 import { displayName, partnerOf, pendingInvites, unseenRejections } from './shared'
 import { currentOdometer, reminderStatus } from './vehicle'
 
-export type NotificationKind = 'invite' | 'rejection' | 'handle' | 'rules' | 'overdue' | 'today' | 'soon' | 'maintenance'
+export type NotificationKind = 'invite' | 'rejection' | 'handle' | 'rules' | 'overdue' | 'today' | 'soon' | 'maintenance' | 'owed' | 'sent'
 
 export interface AppNotification {
   id: string
@@ -19,7 +20,7 @@ export interface AppNotification {
   tone: 'expense' | 'warning' | 'info'
   bill?: SharedBill
   /** Tela para abrir ao tocar */
-  view?: 'lancamentos' | 'calendario' | 'veiculo' | 'casa' | 'configuracoes'
+  view?: 'dashboard' | 'lancamentos' | 'calendario' | 'veiculo' | 'casa' | 'configuracoes'
 }
 
 const sum = (list: Transaction[]): Cents => list.reduce((a, t) => a + t.amount, 0)
@@ -30,6 +31,10 @@ export function buildNotifications(input: {
   handle: string | null
   handleLoaded: boolean
   rulesMissing: boolean
+  /** uids com aceite automático: os convites deles não viram aviso */
+  autoAccept?: ReadonlySet<string>
+  /** O que outras pessoas devem me enviar ("Enviar para @eu") */
+  incoming?: Transfer[]
   transactions: Transaction[]
   maintenance: MaintenanceReminder[]
   vehicles: Vehicle[]
@@ -41,7 +46,7 @@ export function buildNotifications(input: {
   const out: AppNotification[] = []
 
   if (uid) {
-    for (const b of pendingInvites(bills, uid)) {
+    for (const b of pendingInvites(bills, uid, input.autoAccept)) {
       const creator = b.participants[0]
       out.push({
         id: `invite-${b.id}-${b.version}`,
@@ -85,6 +90,43 @@ export function buildNotifications(input: {
         tone: 'info',
       })
     }
+  }
+
+  // Quem me deve: um aviso por pessoa (vencendo no prazo ou atrasado) e
+  // "enviou" nos últimos dias.
+  const soonLimit = addDaysISO(today, input.dueSoonDays)
+  const owed = new Map<string, Transfer[]>()
+  for (const t of input.incoming ?? []) {
+    const who = t.fromName || (t.fromHandle ? `@${t.fromHandle}` : 'Alguém')
+    if (t.status === 'PENDING' && t.dueDate <= soonLimit) owed.set(t.fromUid, [...(owed.get(t.fromUid) ?? []), t])
+    if (t.status === 'SENT' && t.updatedAt.slice(0, 10) >= addDaysISO(today, -7))
+      out.push({
+        id: `sent-${t.id}`,
+        kind: 'sent',
+        priority: 50,
+        title: `${who} enviou ${formatMoney(t.amount)}`,
+        detail: t.description,
+        tone: 'info',
+        view: 'dashboard',
+      })
+  }
+  for (const list of owed.values()) {
+    const first = list[0]!
+    const who = first.fromName || (first.fromHandle ? `@${first.fromHandle}` : 'Alguém')
+    const late = list.filter((t) => t.dueDate < today)
+    const next = [...list].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]!
+    const total = list.reduce((a, t) => a + t.amount, 0)
+    out.push({
+      id: `owed-${first.fromUid}-${list.length}-${total}`,
+      kind: 'owed',
+      priority: late.length ? 75 : 45,
+      title: `${who} deve te enviar ${formatMoney(total)}`,
+      detail: late.length
+        ? `${late.length} ${late.length === 1 ? 'atrasado' : 'atrasados'}: ${late.map((t) => t.description).slice(0, 2).join(', ')}`
+        : `Até ${formatDateShort(next.dueDate)}: ${list.map((t) => t.description).slice(0, 2).join(', ')}`,
+      tone: late.length ? 'expense' : 'info',
+      view: 'dashboard',
+    })
   }
 
   // Contas: só despesas não pagas e fora de espera (conta compartilhada alterada).

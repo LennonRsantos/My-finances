@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SharedBill } from '@/types/finance'
+import type { SharedBill, Transfer } from '@/types/finance'
 
 interface SharedState {
   /** Contas que criei e que recebi (vêm do Firestore em tempo real) */
@@ -10,9 +10,17 @@ interface SharedState {
   handleLoaded: boolean
   /** Regras do Firestore sem as coleções compartilhadas (não publicadas): recurso indisponível */
   rulesMissing: boolean
+  /** Meus espelhos de "Enviar para @usuário" */
+  outgoing: Transfer[]
+  /** O que outras pessoas devem me enviar */
+  incoming: Transfer[]
+  /** Os espelhos já chegaram do Firestore (antes disso, não sincroniza) */
+  transfersLoaded: boolean
 }
 
-/** Só existe com login; não vai para o navegador. */
-export const useSharedStore = create<SharedState>()(() => ({ bills: [], handle: null, handleLoaded: false, rulesMissing: false }))
+const empty = { bills: [], handle: null, handleLoaded: false, rulesMissing: false, outgoing: [], incoming: [], transfersLoaded: false }
 
-export const resetShared = () => useSharedStore.setState({ bills: [], handle: null, handleLoaded: false, rulesMissing: false })
+/** Só existe com login; não vai para o navegador. */
+export const useSharedStore = create<SharedState>()(() => ({ ...empty }))
+
+export const resetShared = () => useSharedStore.setState({ ...empty })

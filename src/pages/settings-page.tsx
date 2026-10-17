@@ -12,11 +12,13 @@ import {
   Monitor,
   Moon,
   Palette,
+  SlidersHorizontal,
   Sun,
   Tags,
   Trash2,
   Upload,
   User,
+  UserCheck,
   UserX,
   Wallet,
   type LucideIcon,
@@ -24,10 +26,11 @@ import {
 import { useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountDialog, type AccountDialogKind } from '@/components/settings/account-dialogs'
-import { HandleDialog } from '@/components/shared/shared-ui'
+import { AutoAcceptDialog, HandleDialog } from '@/components/shared/shared-ui'
 import { CategoryManager } from '@/components/settings/category-manager'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Switch } from '@/components/ui/misc'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { backupCount, parseBackup, type ParsedBackup } from '@/lib/backup'
@@ -37,6 +40,7 @@ import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { parseMoneyInput } from '@/lib/schemas'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth-store'
+import { setKeepFilters } from '@/hooks/use-saved-filters'
 import { useFinanceStore } from '@/store/finance-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useSharedStore } from '@/store/shared-store'
@@ -113,6 +117,8 @@ function AccountSection() {
   const user = useAuthStore((s) => s.user)
   const [dialog, setDialog] = useState<AccountDialogKind | null>(null)
   const [handleOpen, setHandleOpen] = useState(false)
+  const [autoOpen, setAutoOpen] = useState(false)
+  const autoAccept = useSettingsStore((s) => s.settings.autoAcceptFrom)
   const { handle, handleLoaded, rulesMissing } = useSharedStore()
 
   if (status !== 'signed_in' || !user) {
@@ -159,6 +165,21 @@ function AccountSection() {
         />
       </Group>
 
+      {handle && !rulesMissing && (
+        <Group title="Contas divididas">
+          <Row
+            icon={UserCheck}
+            label="Aceitar automaticamente de"
+            value={
+              autoAccept?.length
+                ? autoAccept.map((p) => `@${p.handle}`).join(', ')
+                : 'Ninguém: toda conta dividida pede seu aceite'
+            }
+            onClick={() => setAutoOpen(true)}
+          />
+        </Group>
+      )}
+
       <Group
         title="Acesso"
         footer={google && !password ? 'Crie uma senha para entrar também com e-mail, sem depender do Google.' : undefined}
@@ -183,6 +204,7 @@ function AccountSection() {
 
       <AccountDialog kind={dialog} onClose={() => setDialog(null)} />
       <HandleDialog open={handleOpen} onClose={() => setHandleOpen(false)} />
+      <AutoAcceptDialog open={autoOpen} onClose={() => setAutoOpen(false)} />
     </>
   )
 }
@@ -277,6 +299,7 @@ function OpeningBalanceForm() {
 
 function PreferencesSection() {
   const notifications = useSettingsStore((s) => s.settings.notifications)
+  const keepFilters = useSettingsStore((s) => !!s.settings.keepFilters)
   const update = useSettingsStore((s) => s.update)
 
   return (
@@ -307,6 +330,15 @@ function PreferencesSection() {
               ))}
             </select>
           }
+        />
+      </Group>
+
+      <Group title="Filtros" footer="Lançamentos e Relatórios abrem sempre com os últimos filtros usados, em todos os seus aparelhos.">
+        <Row
+          icon={SlidersHorizontal}
+          label="Manter filtros salvos"
+          value={keepFilters ? 'Abre com o último filtro usado' : 'Filtros voltam ao padrão ao reabrir'}
+          action={<Switch checked={keepFilters} onCheckedChange={setKeepFilters} aria-label="Manter filtros salvos" />}
         />
       </Group>
     </>

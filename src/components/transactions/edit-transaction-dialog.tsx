@@ -1,9 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Layers, Repeat, Send, Trash2 } from 'lucide-react'
+import { Layers, Repeat, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
+import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
+import { useSharedRole } from '@/components/shared/share-fields'
+import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-field'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
@@ -12,7 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { fromCents, toCents } from '@/lib/money'
 import { parseMoneyInput } from '@/lib/schemas'
 import { cn } from '@/lib/utils'
+import { cancelSharedBill } from '@/lib/shared-cloud'
 import { baseDescription, useFinanceStore, type EditScope } from '@/store/finance-store'
+import { reportSyncError, useAuthStore } from '@/store/auth-store'
+import { useSettingsStore } from '@/store/settings-store'
 import { useUIStore } from '@/store/ui-store'
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type ISODate, type Transaction } from '@/types/finance'
 
@@ -43,9 +49,16 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
     })),
   )
   const inSeries = !!(t.installment || t.recurringCostId)
+  // Parcelamento que na verdade é conta fixa (ex.: aluguel dividido em 12x).
+  const seriesId = t.installment?.installmentId
+  const isFixed = useSettingsStore((s) => !!seriesId && (s.settings.fixedSeries ?? []).includes(seriesId))
+  const toggleFixedSeries = useSettingsStore((s) => s.toggleFixedSeries)
   const [scope, setScope] = useState<EditScope>('one')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const isIncome = t.type === 'receita'
+  const signedIn = useAuthStore((s) => s.status === 'signed_in')
+  const canShare = canShareExisting(t, signedIn)
+  const shared = useSharedRole(t)
 
   const {
     register,
@@ -69,7 +82,12 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   })
 
   const categoryId = useWatch({ control, name: 'categoryId' })
-  const payTo = useWatch({ control, name: 'payTo' })?.trim()
+  const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
+  const payTo = payToRaw.trim()
+  const [payLink, setPayLink] = useState<PayLink | null>(() => payLinkOf(t))
+  const payeeSuggestions = useFinanceStore(
+    useShallow((s) => [...new Set(s.transactions.filter((x) => x.payTo?.trim() && !x.payToUid).map((x) => x.payTo!.trim()))].sort()),
+  )
   const typeCategories = useMemo(() => categories.filter((c) => c.type === t.type), [categories, t.type])
   const subs = useMemo(() => subcategories.filter((s) => s.categoryId === categoryId), [subcategories, categoryId])
 
@@ -87,6 +105,8 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         status: v.paid ? 'pago' : 'pendente',
         paymentDate: v.paid ? (t.paymentDate ?? dueDate) : null,
         payTo: !isIncome && v.payTo ? v.payTo : null,
+        payToUid: !isIncome && v.payTo && payLink ? payLink.uid : null,
+        payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
         notes: v.notes || undefined,
       },
       scope,
@@ -102,7 +122,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         {inSeries && (
           <div className="flex flex-col gap-2 rounded-xl border p-3">
             <p className="flex items-center gap-2 text-sm font-medium">
-              {t.installment ? (
+              {t.installment && !isFixed ? (
                 <Layers className="size-4 text-muted-foreground" />
               ) : (
                 <Repeat className="size-4 text-muted-foreground" />
@@ -136,6 +156,17 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                 Descrição, valor, categoria, pagamento e pessoa valem para os próximos ainda pendentes. Data e status mudam só
                 neste.
               </p>
+            )}
+            {seriesId && (
+              <label className="mt-1 flex items-center justify-between gap-3 border-t pt-3">
+                <span className="flex flex-col">
+                  <span className="text-sm font-medium">Conta fixa (não é dívida)</span>
+                  <span className="text-xs text-muted-foreground">
+                    Para aluguel, condomínio e contas que se repetem. Não entra no saldo devedor. Vale para todas as parcelas.
+                  </span>
+                </span>
+                <Switch checked={isFixed} onCheckedChange={() => toggleFixedSeries(seriesId)} aria-label="Conta fixa (não é dívida)" />
+              </label>
             )}
           </div>
         )}
@@ -252,13 +283,15 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         </div>
 
         {!isIncome && (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="edit-payTo" className="flex items-center gap-1.5">
-              <Send className="size-3.5 text-muted-foreground" /> Enviar para (opcional)
-            </Label>
-            <Input id="edit-payTo" placeholder="Ex.: Isadora" aria-invalid={!!errors.payTo} {...register('payTo')} />
-            <FieldError message={errors.payTo?.message} />
-          </div>
+          <PayToField
+            id="edit-payTo"
+            value={payToRaw}
+            onChange={(name) => setValue('payTo', name, { shouldValidate: !!errors.payTo })}
+            link={payLink}
+            onLinkChange={setPayLink}
+            suggestions={payeeSuggestions}
+            error={errors.payTo?.message}
+          />
         )}
 
         <Controller
@@ -271,6 +304,15 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
             </div>
           )}
         />
+
+        {canShare && <ShareExisting transaction={t} />}
+        {shared && (
+          <p className="rounded-xl border p-3 text-sm text-muted-foreground">
+            {shared.role === 'creator'
+              ? `Conta dividida com @${shared.partner}. Excluir cancela a conta: as parcelas não pagas somem para os dois.`
+              : `Conta de @${shared.partner}. Só quem criou pode cancelar; se cancelar, some daqui também.`}
+          </p>
+        )}
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="edit-notes">Observações (opcional)</Label>
@@ -290,25 +332,33 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
               variant="expense"
               className="flex-[2]"
               onClick={() => {
-                deleteTransactionScoped(t.id, scope)
+                // Conta dividida: cancela a conta (parcelas não pagas somem para os dois).
+                if (shared?.role === 'creator') cancelSharedBill(shared.bill).catch(reportSyncError)
+                else deleteTransactionScoped(t.id, scope)
                 onDone()
               }}
             >
-              {scope === 'future' ? `Excluir: ${seriesLabel.toLowerCase()}` : 'Confirmar exclusão'}
+              {shared?.role === 'creator'
+                ? 'Cancelar para os dois'
+                : scope === 'future'
+                  ? `Excluir: ${seriesLabel.toLowerCase()}`
+                  : 'Confirmar exclusão'}
             </Button>
           </>
         ) : (
           <>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="text-expense"
-              aria-label="Excluir"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 />
-            </Button>
+            {shared?.role !== 'invitee' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="text-expense"
+                aria-label={shared ? 'Cancelar conta dividida' : 'Excluir'}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 />
+              </Button>
+            )}
             <Button type="submit" className="flex-1">
               Salvar alterações
             </Button>

@@ -8,12 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass } from '@/components/ui/form-kit'
 import { Input, Label } from '@/components/ui/input'
-import { Badge, type Tone } from '@/components/ui/misc'
+import { Badge, Switch, type Tone } from '@/components/ui/misc'
+import { useKnownPartners } from '@/components/shared/share-fields'
 import { cents, date, money } from '@/lib/form-fields'
 import { formatMoney, fromCents } from '@/lib/money'
 import { displayName, handleError, myTotal, normalizeHandle, partnerOf, suggestHandle } from '@/lib/shared'
 import { cancelSharedBill, claimHandle, lookupHandle, updateSharedBill } from '@/lib/shared-cloud'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
+import { NO_AUTO_ACCEPT, useSettingsStore } from '@/store/settings-store'
 import { useSharedStore } from '@/store/shared-store'
 import type { ISODate, SharedBill, SharedBillStatus, SharedPayerType } from '@/types/finance'
 
@@ -103,6 +105,123 @@ export function HandleDialog({ open, onClose }: { open: boolean; onClose: () => 
           </DialogDescription>
         </DialogHeader>
         {open && <HandleForm onDone={onClose} />}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Aceite automático
+// ---------------------------------------------------------------------------
+
+function AutoAcceptForm() {
+  const people = useSettingsStore((s) => s.settings.autoAcceptFrom ?? NO_AUTO_ACCEPT)
+  const setAutoAccept = useSettingsStore((s) => s.setAutoAccept)
+  const known = useKnownPartners()
+  const myHandle = useSharedStore((s) => s.handle)
+  const [value, setValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  // Conhecidos + quem já foi adicionado à mão, sem repetir.
+  const rows = [...known, ...people.filter((p) => !known.some((k) => k.uid === p.uid))]
+  const allowed = new Set(people.map((p) => p.uid))
+  const toggle = (p: (typeof rows)[number], on: boolean) =>
+    setAutoAccept(on ? [...people, { uid: p.uid, handle: p.handle, name: p.name }] : people.filter((x) => x.uid !== p.uid))
+
+  const add = async () => {
+    const handle = normalizeHandle(value)
+    if (!handle) return setError('Informe o @ da pessoa')
+    if (handle === myHandle) return setError('Esse é o seu @')
+    const existing = rows.find((r) => r.handle === handle)
+    if (existing) {
+      if (!allowed.has(existing.uid)) toggle(existing, true)
+      setValue('')
+      return setError(null)
+    }
+    setBusy(true)
+    try {
+      const owner = await lookupHandle(handle)
+      if (!owner) return setError(`Nenhum usuário com @${handle}`)
+      setAutoAccept([...people, { uid: owner.uid, handle, name: owner.name }])
+      setValue('')
+      setError(null)
+    } catch {
+      setError('Não foi possível buscar o @. Verifique a conexão.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4 px-5 pb-5">
+      {rows.length > 0 ? (
+        <ul className="flex flex-col divide-y rounded-xl border">
+          {rows.map((p) => (
+            <li key={p.uid} className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-medium">@{p.handle}</span>
+                {p.name && <span className="truncate text-xs text-muted-foreground">{p.name}</span>}
+              </span>
+              <Switch checked={allowed.has(p.uid)} onCheckedChange={(on) => toggle(p, on)} aria-label={`Aceitar automaticamente de @${p.handle}`} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">Você ainda não dividiu contas com ninguém. Adicione um @ abaixo.</p>
+      )}
+      <form
+        noValidate
+        className="flex flex-col gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          add()
+        }}
+      >
+        <Label htmlFor="auto-handle">Adicionar pessoa</Label>
+        <div className="flex gap-2">
+          <div className="relative min-w-0 flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">@</span>
+            <Input
+              id="auto-handle"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              className="pl-8"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setError(null)
+              }}
+            />
+          </div>
+          <Button type="submit" variant="outline" disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" /> : 'Adicionar'}
+          </Button>
+        </div>
+        {error && (
+          <p role="alert" className="text-sm text-expense">
+            {error}
+          </p>
+        )}
+      </form>
+      <p className="text-xs text-muted-foreground">
+        Contas enviadas por essas pessoas entram direto nos seus lançamentos, sem convite. Se a pessoa cancelar, elas somem também. Parcelas
+        que você já pagou continuam.
+      </p>
+    </div>
+  )
+}
+
+export function AutoAcceptDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Aceitar automaticamente</DialogTitle>
+          <DialogDescription>Escolha quem pode dividir contas com você sem pedir aceite.</DialogDescription>
+        </DialogHeader>
+        {open && <AutoAcceptForm />}
       </DialogContent>
     </Dialog>
   )
