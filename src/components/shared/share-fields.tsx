@@ -123,12 +123,15 @@ export function ShareFields({
   onChange,
   label = 'Dividir esta conta',
   note,
+  paidByMe = false,
 }: {
   share: ShareState
   onChange: (s: ShareState) => void
   label?: string
   /** Aviso extra, ex.: conta fixa vira 12 parcelas mensais */
   note?: string
+  /** Gasto já pago por mim: sem escolha de quem paga, a pessoa reembolsa. */
+  paidByMe?: boolean
 }) {
   const myHandle = useSharedStore((s) => s.handle)
   const set = (patch: Partial<ShareState>) => onChange({ ...share, ...patch, error: 'error' in patch ? (patch.error ?? '') : '' })
@@ -165,28 +168,31 @@ export function ShareFields({
             </div>
           </div>
           <PartnerSuggestions value={share.handle} onPick={(handle) => set({ handle })} />
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Quem paga">
-            {(
-              [
-                ['SPLIT_PAYMENT', 'Cada um a sua parte'],
-                ['SINGLE_PAYER', 'Eu paguei tudo'],
-              ] as const
-            ).map(([key, text]) => (
-              <button
-                key={key}
-                type="button"
-                role="radio"
-                aria-checked={share.payerType === key}
-                onClick={() => set({ payerType: key })}
-                className={cn('h-9 rounded-lg text-sm font-medium transition-colors', share.payerType === key ? 'bg-card shadow-sm' : 'text-muted-foreground')}
-              >
-                {text}
-              </button>
-            ))}
-          </div>
+          {!paidByMe && (
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Quem paga">
+              {(
+                [
+                  ['SPLIT_PAYMENT', 'Cada um a sua parte'],
+                  ['SINGLE_PAYER', 'Eu paguei tudo'],
+                ] as const
+              ).map(([key, text]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={share.payerType === key}
+                  onClick={() => set({ payerType: key })}
+                  className={cn('h-9 rounded-lg text-sm font-medium transition-colors', share.payerType === key ? 'bg-card shadow-sm' : 'text-muted-foreground')}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
-            {share.payerType === 'SPLIT_PAYMENT' ? 'Cada um paga a própria parte direto ao credor.' : 'Você pagou o total; a pessoa reembolsa a parte dela a você.'} A
-            pessoa recebe um convite e as parcelas entram para os dois quando ela aceitar.
+            {paidByMe
+              ? 'Você já pagou: a pessoa reembolsa a parte dela a você. Ela recebe um convite e o reembolso entra quando aceitar.'
+              : `${share.payerType === 'SPLIT_PAYMENT' ? 'Cada um paga a própria parte direto ao credor.' : 'Você pagou o total; a pessoa reembolsa a parte dela a você.'} A pessoa recebe um convite e as parcelas entram para os dois quando ela aceitar.`}
             {note && ` ${note}`}
             {!myHandle && ' Antes, escolha seu @ em Configurações > Conta.'}
           </p>

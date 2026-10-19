@@ -1,4 +1,4 @@
-import { Bike, Car, CheckCircle2, ChevronDown, ChevronRight, Repeat, Fuel, Gauge, Pencil, PiggyBank, Save, Plus, Receipt, Scale, ShieldCheck, Truck, Wrench, AlertTriangle, Disc, Droplets, Landmark, SquareParking, Users, type LucideIcon } from 'lucide-react'
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Bike, CalendarClock, CalendarRange, Car, CheckCircle2, ChevronDown, ClipboardList, ChevronRight, Repeat, Fuel, Gauge, Pencil, PiggyBank, Save, Plus, Receipt, Scale, ShieldCheck, Truck, Wrench, AlertTriangle, Disc, Droplets, Landmark, SquareParking, Users, type LucideIcon } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { useMemo, useState, type ReactNode } from 'react'
@@ -6,9 +6,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { useShallow } from 'zustand/react/shallow'
 import { ChartTooltip } from '@/components/dashboard/chart-tooltip'
 import { RecurringDialog } from '@/components/recurring/recurring-dialog'
-import { UndoReminderButton } from '@/components/shared/undo-reminder-button'
+import { DoneUndoButton } from '@/components/shared/undo-reminder-button'
 import { VehicleDialogs, type VehicleDialogState } from '@/components/vehicle/vehicle-dialogs'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
@@ -31,6 +32,7 @@ import {
   formatKm,
   formatKmPerLiter,
   fuelStats,
+  quoteTotal,
   reminderStatus,
   VEHICLE_CATEGORY_ID,
   type DocumentPreset,
@@ -43,13 +45,12 @@ import {
 } from '@/lib/vehicle'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
-import { FUEL_LABELS, type FuelType, type RecurringCost, type Transaction, type Vehicle, type VehicleKind } from '@/types/finance'
+import { FUEL_LABELS, type FuelType, type MaintenanceReminder, type RecurringCost, type Transaction, type Vehicle, type VehicleKind } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 
 const kindIcon: Record<VehicleKind, LucideIcon> = { carro: Car, moto: Bike, outro: Truck }
 const levelTone: Record<ReminderLevel, Tone> = { atrasado: 'expense', em_breve: 'warning', ok: 'income' }
 const levelLabel: Record<ReminderLevel, string> = { atrasado: 'Atrasada', em_breve: 'Em breve', ok: 'Em dia' }
-const levelColor: Record<ReminderLevel, string> = { atrasado: 'var(--expense)', em_breve: 'var(--warning)', ok: 'var(--income)' }
 
 function Stat({ icon: Icon, label, value, hint }: { icon: LucideIcon; label: string; value: string; hint?: string }) {
   return (
@@ -68,6 +69,16 @@ function Stat({ icon: Icon, label, value, hint }: { icon: LucideIcon; label: str
 // Lembretes
 // ---------------------------------------------------------------------------
 
+type ReminderRow = { r: MaintenanceReminder; s: ReturnType<typeof reminderStatus> }
+
+/** Ordem da lista de manutenção: um toque passa para a próxima. */
+const REMINDER_ORDERS = [
+  { label: 'Vence antes', icon: CalendarClock, sort: (a: ReminderRow, b: ReminderRow) => b.s.progress - a.s.progress },
+  { label: 'Vence depois', icon: CalendarRange, sort: (a: ReminderRow, b: ReminderRow) => a.s.progress - b.s.progress },
+  { label: 'Maior valor', icon: ArrowDownWideNarrow, sort: (a: ReminderRow, b: ReminderRow) => (b.r.estimatedCost ?? 0) - (a.r.estimatedCost ?? 0) },
+  { label: 'Menor valor', icon: ArrowUpNarrowWide, sort: (a: ReminderRow, b: ReminderRow) => (a.r.estimatedCost ?? 0) - (b.r.estimatedCost ?? 0) },
+] as const
+
 function RemindersCard({
   vehicle,
   currentKm,
@@ -81,13 +92,20 @@ function RemindersCard({
   const transactions = useFinanceStore((s) => s.transactions)
   const kmMonth = kmPerMonth(vehicle, transactions) ?? DEFAULT_KM_PER_MONTH
   const today = todayISO()
-  const rows = reminders
-    .map((r) => ({ r, s: reminderStatus(r, currentKm, today), save: reminderSaving(r, currentKm, kmMonth, today) }))
-    .sort((a, b) => b.s.progress - a.s.progress)
+  const [order, setOrder] = useState(0)
+  const Order = REMINDER_ORDERS[order]!
+  const computed = reminders.map((r) => ({ r, s: reminderStatus(r, currentKm, today), save: reminderSaving(r, currentKm, kmMonth, today) }))
+  // A ordem só muda ao trocar a ordenação ou ao criar/excluir lembrete: marcar
+  // ou desmarcar "Feita" não tira a manutenção do lugar.
+  const key = `${order}|${reminders.map((r) => r.id).sort().join(',')}`
+  const [snapshot, setSnapshot] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] })
+  if (snapshot.key !== key) setSnapshot({ key, ids: [...computed].sort(Order.sort).map((x) => x.r.id) })
+  const position = new Map(snapshot.ids.map((id, i) => [id, i]))
+  const rows = [...computed].sort((a, b) => (position.get(a.r.id) ?? Infinity) - (position.get(b.r.id) ?? Infinity))
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-2">
+      <CardHeader className="flex-row flex-wrap items-start justify-between gap-2">
         <div className="flex flex-col gap-1.5">
           <CardTitle className="flex items-center gap-2">
             <Wrench className="size-5" />
@@ -95,10 +113,24 @@ function RemindersCard({
           </CardTitle>
           <CardDescription>Avisa quando faltar 1.000 km ou 30 dias.</CardDescription>
         </div>
-        <Button size="sm" variant="outline" onClick={() => open({ kind: 'reminder', vehicle, currentKm })}>
-          <Plus />
-          Lembrete
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {reminders.length > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setOrder((o) => (o + 1) % REMINDER_ORDERS.length)}
+              aria-label={`Ordem: ${Order.label}. Tocar para mudar`}
+              title="Mudar a ordem"
+            >
+              <Order.icon />
+              {Order.label}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => open({ kind: 'reminder', vehicle, currentKm })}>
+            <Plus />
+            Lembrete
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
@@ -122,8 +154,9 @@ function RemindersCard({
                 s.daysLeft !== null &&
                   (s.daysLeft >= 0 ? `vence ${formatDateShort(s.dueDate!)}` : `venceu ${formatDateShort(s.dueDate!)}`),
               ].filter(Boolean)
+              const last = r.history?.[0] ?? (r.lastDate ? { date: r.lastDate, km: r.lastKm } : null)
               return (
-                <li key={r.id} className="flex flex-col gap-2 py-3">
+                <li key={r.id} className="py-3">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -135,7 +168,13 @@ function RemindersCard({
                         <span className="text-sm font-medium">{r.name}</span>
                         <Badge tone={levelTone[s.level]}>{levelLabel[s.level]}</Badge>
                       </span>
-                      <span className="block text-xs text-muted-foreground">{parts.join(' ou ')}</span>
+                      <span className="block text-xs text-muted-foreground">{parts.length ? parts.join(' ou ') : 'sem prazo'}</span>
+                      {last && (
+                        <span className="block text-xs text-muted-foreground">
+                          Última: {formatDateShort(last.date)}
+                          {last.km != null && ` · ${formatKm(last.km)}`}
+                        </span>
+                      )}
                       {save ? (
                         <span className="block text-xs font-medium text-info">
                           Guarde {formatMoney(save.average)}/mês
@@ -146,15 +185,39 @@ function RemindersCard({
                         <span className="block text-xs text-muted-foreground">Informe o custo para saber quanto guardar</span>
                       )}
                     </button>
-                    <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
-                      <Button size="sm" variant={s.level === 'ok' ? 'ghost' : 'outline'} onClick={() => open({ kind: 'complete', vehicle, currentKm, reminder: r })}>
-                        <CheckCircle2 />
-                        Feita
-                      </Button>
-                      <UndoReminderButton reminder={r} />
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      {r.undo && !r.quote && s.level === 'ok' ? (
+                        <DoneUndoButton reminder={r} />
+                      ) : (
+                        <>
+                          <Button size="sm" variant={r.quote || s.level !== 'ok' ? 'outline' : 'ghost'} onClick={() => open({ kind: 'complete', vehicle, currentKm, reminder: r })}>
+                            <CheckCircle2 />
+                            Concluir
+                          </Button>
+                          {!r.quote && (
+                            <Button size="sm" variant="ghost" onClick={() => open({ kind: 'quote', vehicle, reminder: r })}>
+                              <ClipboardList />
+                              Orçamento
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
-                  <Progress value={s.progress} color={levelColor[s.level]} label={`${r.name}: ${Math.round(s.progress * 100)}% do intervalo`} />
+                  {r.quote && (
+                    <button
+                      type="button"
+                      onClick={() => open({ kind: 'quote', vehicle, reminder: r })}
+                      className="mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-left text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <ClipboardList className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">
+                        Orçamento · {r.quote.items.length} {r.quote.items.length === 1 ? 'item' : 'itens'}
+                        {r.quote.installments > 1 && ` · ${r.quote.installments}x`}
+                      </span>
+                      <span className="shrink-0 font-semibold tabular-nums">{formatMoney(quoteTotal(r.quote))}</span>
+                    </button>
+                  )}
                 </li>
               )
             })}
@@ -386,10 +449,9 @@ function FuelCompare({ stats, vehicle }: { stats: FuelStats; vehicle: Vehicle })
             <label htmlFor={`cmp-${id}`} className="text-xs text-muted-foreground">
               {label}
             </label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+            <Affix before="R$">
               <Input id={`cmp-${id}`} inputMode="decimal" placeholder="0,00" className="pl-10" value={value} onChange={(ev) => set(ev.target.value)} />
-            </div>
+            </Affix>
           </div>
         ))}
       </div>

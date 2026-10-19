@@ -29,6 +29,7 @@ import { AccountDialog, type AccountDialogKind } from '@/components/settings/acc
 import { AutoAcceptDialog, HandleDialog } from '@/components/shared/shared-ui'
 import { CategoryManager } from '@/components/settings/category-manager'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Card } from '@/components/ui/card'
 import { Switch } from '@/components/ui/misc'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -270,8 +271,8 @@ function OpeningBalanceForm() {
     >
       <Label htmlFor="openingBalance">Saldo em conta antes do primeiro lançamento</Label>
       <div className="flex gap-2">
-        <div className="relative flex-1">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+        <div className="flex-1">
+          <Affix before="R$">
           <Input
             id="openingBalance"
             inputMode="decimal"
@@ -284,6 +285,7 @@ function OpeningBalanceForm() {
               setSaved(false)
             }}
           />
+          </Affix>
         </div>
         <Button type="submit" variant={saved ? 'outline' : 'default'}>
           {saved ? 'Salvo' : 'Salvar'}

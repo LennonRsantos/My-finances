@@ -144,6 +144,8 @@ export interface NewSharedBill {
   installmentTotal?: number | null
   /** Conta fixa: valor por mês, sem fim (ver `SharedBill.recurring`) */
   recurring?: boolean | null
+  /** Criador já pagou (ver `SharedBill.creatorPaid`) */
+  creatorPaid?: boolean | null
   firstDueDate: ISODate
   categoryId: Category['id']
   subcategoryId?: string | null
@@ -172,6 +174,7 @@ export async function createSharedBill(input: NewSharedBill): Promise<SharedBill
     installmentOffset: input.installmentOffset ?? null,
     installmentTotal: input.installmentTotal ?? null,
     recurring: input.recurring ?? false,
+    creatorPaid: input.creatorPaid ?? false,
     firstDueDate: input.firstDueDate,
     categoryId: input.categoryId,
     subcategoryId: input.subcategoryId ?? null,

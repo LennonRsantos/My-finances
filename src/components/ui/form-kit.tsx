@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { DialogClose } from '@/components/ui/dialog'
 import { FieldError, Label } from '@/components/ui/input'
+import { CalculatorPanel, CalculatorToggle } from '@/components/ui/money-calculator'
 import { cn } from '@/lib/utils'
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PaymentMethod } from '@/types/finance'
 
@@ -20,12 +21,33 @@ export function Field({ id, label, error, children, hint }: { id: string; label:
   )
 }
 
-export function Affix({ before, after, children }: { before?: string; after?: string; children: ReactNode }) {
-  return (
-    <div className="relative">
+/**
+ * Texto fixo dentro da caixa ("R$", "km"). Caixa de dinheiro ("R$") ganha a
+ * mini calculadora no canto direito; `calc={false}` tira.
+ */
+export function Affix({ before, after, children, calc }: { before?: string; after?: string; children: ReactNode; calc?: boolean }) {
+  const withCalc = calc ?? before === 'R$'
+  const box = useRef<HTMLDivElement>(null)
+  // Abre com o valor que já está na caixa (lido no clique, não no render).
+  const [open, setOpen] = useState<string | null>(null)
+  const field = (
+    <div ref={box} className={cn('relative', withCalc && '[&_input]:pr-11')}>
       {before && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{before}</span>}
       {children}
-      {after && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">{after}</span>}
+      {after && !withCalc && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">{after}</span>}
+      {withCalc && (
+        <CalculatorToggle
+          open={open !== null}
+          onToggle={() => setOpen((o) => (o !== null ? null : (box.current?.querySelector('input')?.value.trim() ?? '')))}
+        />
+      )}
+    </div>
+  )
+  if (!withCalc) return field
+  return (
+    <div className="flex flex-col">
+      {field}
+      {open !== null && <CalculatorPanel fieldRef={box} initial={open} onClose={() => setOpen(null)} />}
     </div>
   )
 }

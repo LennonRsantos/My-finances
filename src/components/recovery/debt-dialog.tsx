@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { fromCents, toCents } from '@/lib/money'
@@ -71,10 +72,9 @@ function DebtForm({ debt, onDone }: { debt?: Debt; onDone: () => void }) {
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="debt-balance">Quanto deve hoje</Label>
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+          <Affix before="R$">
             <Input id="debt-balance" inputMode="decimal" className="pl-10" aria-invalid={!!errors.balance} {...register('balance')} />
-          </div>
+          </Affix>
           <FieldError message={errors.balance?.message} />
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -88,10 +88,9 @@ function DebtForm({ debt, onDone }: { debt?: Debt; onDone: () => void }) {
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="debt-minimum">Paga por mês</Label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+            <Affix before="R$">
               <Input id="debt-minimum" inputMode="decimal" className="pl-10" aria-invalid={!!errors.minimum} {...register('minimum')} />
-            </div>
+            </Affix>
             <FieldError message={errors.minimum?.message} />
           </div>
         </div>

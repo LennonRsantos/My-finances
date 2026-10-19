@@ -8,7 +8,9 @@ import { ShareExisting, canShareExisting } from '@/components/shared/share-exist
 import { useSharedRole } from '@/components/shared/share-fields'
 import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-field'
 import { SharedBillDialog } from '@/components/shared/shared-ui'
+import { AdjustInstallments } from '@/components/transactions/adjust-installments'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -171,13 +173,17 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                   <Switch checked={isFixed} onCheckedChange={() => toggleFixedSeries(seriesId)} aria-label="Conta fixa (não é dívida)" />
                 </label>
               )}
+              {t.installment && !t.sharedBillId && (
+                <div className="mt-1 flex flex-col border-t pt-3">
+                  <AdjustInstallments transaction={t} onDone={onDone} />
+                </div>
+              )}
             </div>
           )}
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="edit-amount">Valor</Label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+            <Affix before="R$">
               <Input
                 id="edit-amount"
                 inputMode="decimal"
@@ -186,7 +192,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                 aria-invalid={!!errors.amount}
                 {...register('amount', { setValueAs: parseMoneyInput })}
               />
-            </div>
+            </Affix>
             <FieldError message={errors.amount?.message} />
           </div>
 

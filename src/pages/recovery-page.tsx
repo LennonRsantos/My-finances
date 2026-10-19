@@ -19,6 +19,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { DebtDialog } from '@/components/recovery/debt-dialog'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge, EmptyState, Switch, type Tone } from '@/components/ui/misc'
@@ -78,8 +79,7 @@ function MoneyField({ value, onChange, id, label }: { value: number; onChange: (
   const [text, setText] = useState<string | null>(null)
   const shown = text ?? (value ? fromCents(value).toFixed(2).replace('.', ',') : '')
   return (
-    <div className="relative">
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+    <Affix before="R$">
       <Input
         id={id}
         aria-label={label}
@@ -95,7 +95,7 @@ function MoneyField({ value, onChange, id, label }: { value: number; onChange: (
           setText(null)
         }}
       />
-    </div>
+    </Affix>
   )
 }
 

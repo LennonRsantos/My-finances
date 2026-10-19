@@ -5,6 +5,7 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
+import { Affix } from '@/components/ui/form-kit'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
@@ -180,8 +181,7 @@ function CategoryForm({ type, category, onDone }: { type: TransactionType; categ
         {type === 'despesa' && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="cat-budget">Limite mensal (opcional)</Label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+            <Affix before="R$">
               <Input
                 id="cat-budget"
                 inputMode="decimal"
@@ -190,7 +190,7 @@ function CategoryForm({ type, category, onDone }: { type: TransactionType; categ
                 aria-invalid={!!errors.budget}
                 {...register('budget')}
               />
-            </div>
+            </Affix>
             <FieldError message={errors.budget?.message} />
           </div>
         )}
@@ -235,8 +235,7 @@ function SubcategoryForm({ category, subcategory, onDone }: { category: Category
         {category.type === 'despesa' && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="sub-budget">Limite mensal (opcional)</Label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+            <Affix before="R$">
               <Input
                 id="sub-budget"
                 inputMode="decimal"
@@ -245,7 +244,7 @@ function SubcategoryForm({ category, subcategory, onDone }: { category: Category
                 aria-invalid={!!errors.budget}
                 {...register('budget')}
               />
-            </div>
+            </Affix>
             <FieldError message={errors.budget?.message} />
           </div>
         )}

@@ -3,7 +3,7 @@
  * abastecimentos trazem `fuel` (litros) e `odometer` (km).
  */
 import { differenceInCalendarDays } from 'date-fns'
-import type { Cents, FuelType, ISODate, MaintenanceReminder, RecurringCost, Transaction, Vehicle, YearMonth } from '@/types/finance'
+import type { Cents, FuelType, ISODate, MaintenanceQuote, MaintenanceReminder, RecurringCost, Transaction, Vehicle, YearMonth } from '@/types/finance'
 import { addMonthsISO, lastNMonths, monthOf, parseDate } from './dates'
 
 export const VEHICLE_CATEGORY_ID = 'cat-veiculo'
@@ -194,13 +194,32 @@ export interface ReminderStatus {
 export const SOON_KM = 1000
 export const SOON_DAYS = 30
 
+type DueFields = Pick<MaintenanceReminder, 'intervalKm' | 'intervalMonths' | 'lastKm' | 'lastDate' | 'dueKm' | 'dueDate'>
+
+/**
+ * Próximo vencimento: o informado direto ("próxima em"), senão última vez +
+ * intervalo. `null` = sem prazo por esse critério.
+ */
+export function nextDue(r: DueFields): { km: number | null; date: ISODate | null } {
+  const km = r.dueKm ?? (r.intervalKm && r.lastKm != null ? r.lastKm + r.intervalKm : null)
+  const date = r.dueDate ?? (r.intervalMonths && r.lastDate ? addMonthsISO(r.lastDate, r.intervalMonths) : null)
+  return { km, date }
+}
+
+/** Soma dos itens do orçamento. */
+export const quoteTotal = (q: Pick<MaintenanceQuote, 'items'> | null | undefined): Cents => (q ? q.items.reduce((a, i) => a + i.amount, 0) : 0)
+
 export function reminderStatus(r: MaintenanceReminder, currentKm: number, today: ISODate): ReminderStatus {
-  const kmLeft = r.intervalKm && r.lastKm != null ? r.lastKm + r.intervalKm - currentKm : null
-  const dueDate = r.intervalMonths && r.lastDate ? addMonthsISO(r.lastDate, r.intervalMonths) : null
+  const due = nextDue(r)
+  const kmLeft = due.km !== null ? due.km - currentKm : null
+  const dueDate = due.date
   const daysLeft = dueDate ? differenceInCalendarDays(parseDate(dueDate), parseDate(today)) : null
 
-  const kmProgress = kmLeft !== null && r.intervalKm ? 1 - kmLeft / r.intervalKm : 0
-  const totalDays = dueDate && r.lastDate ? differenceInCalendarDays(parseDate(dueDate), parseDate(r.lastDate)) : 0
+  // Progresso pelo intervalo; com vencimento direto, pelo trecho desde a última vez.
+  const kmSpan = r.intervalKm ?? (due.km !== null && r.lastKm != null ? due.km - r.lastKm : null)
+  const kmProgress = kmLeft !== null && kmSpan ? 1 - kmLeft / kmSpan : 0
+  const start = r.lastDate ?? (r.createdAt.slice(0, 10) as ISODate)
+  const totalDays = dueDate ? differenceInCalendarDays(parseDate(dueDate), parseDate(start)) : 0
   const dayProgress = daysLeft !== null && totalDays > 0 ? 1 - daysLeft / totalDays : 0
 
   const level: ReminderLevel =
@@ -277,16 +296,17 @@ export interface ReminderSaving {
  * troca (maior quando ela está perto).
  */
 export function reminderSaving(
-  r: Pick<MaintenanceReminder, 'intervalKm' | 'intervalMonths' | 'lastKm' | 'lastDate' | 'estimatedCost'>,
+  r: DueFields & Pick<MaintenanceReminder, 'estimatedCost'>,
   currentKm: number,
   kmMonth: number,
   today: ISODate,
 ): ReminderSaving | null {
   const cycle = reminderCycle(r, kmMonth)
   if (!r.estimatedCost || !cycle) return null
-  const kmLeft = r.intervalKm && r.lastKm != null ? r.lastKm + r.intervalKm - currentKm : null
+  const due = nextDue(r)
+  const kmLeft = due.km !== null ? due.km - currentKm : null
   const monthsByKm = kmLeft !== null && kmMonth > 0 ? kmLeft / kmMonth : Infinity
-  const dueDate = r.intervalMonths && r.lastDate ? addMonthsISO(r.lastDate, r.intervalMonths) : null
+  const dueDate = due.date
   const monthsByTime = dueDate ? differenceInCalendarDays(parseDate(dueDate), parseDate(today)) / DAYS_PER_MONTH : Infinity
   const next = Math.min(monthsByKm, monthsByTime)
   const monthsToNext = Number.isFinite(next) ? next : null

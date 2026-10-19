@@ -280,9 +280,40 @@ export interface MaintenanceReminder {
   lastDate: ISODate | null
   /** Quanto costuma custar, para calcular a reserva mensal */
   estimatedCost?: Cents | null
+  /**
+   * Vencimento informado direto ("próxima em 15/12 ou 60.000 km"). Vale até a
+   * próxima conclusão; depois o prazo vem de última vez + intervalo.
+   */
+  dueKm?: number | null
+  dueDate?: ISODate | null
+  /** Orçamento da oficina, antes de concluir */
+  quote?: MaintenanceQuote | null
+  /** Cada vez que foi feita, da mais recente para a mais antiga */
+  history?: MaintenanceDone[]
   /** Como estava antes da última vez marcada como feita, para desfazer. */
   undo?: MaintenanceUndo | null
   createdAt: string
+}
+
+export interface MaintenanceQuoteItem {
+  id: ID
+  name: string
+  amount: Cents
+}
+
+export interface MaintenanceQuote {
+  items: MaintenanceQuoteItem[]
+  installments: number
+  paymentMethod: PaymentMethod
+  updatedAt: string
+}
+
+export interface MaintenanceDone {
+  date: ISODate
+  /** Km no painel no dia em que ficou pronta */
+  km: number | null
+  amount: Cents | null
+  installments: number
 }
 
 export interface MaintenanceUndo {
@@ -292,6 +323,13 @@ export interface MaintenanceUndo {
   transactionId: Transaction['id'] | null
   /** Convite de divisão enviado junto ao marcar como feita */
   sharedBillId: string | null
+  /** Parcelas lançadas ao concluir (todas são apagadas ao desfazer) */
+  transactionIds?: Transaction['id'][]
+  installmentId?: Installment['id'] | null
+  /** Vencimento e orçamento de antes, que voltam ao desfazer */
+  dueKm?: number | null
+  dueDate?: ISODate | null
+  quote?: MaintenanceQuote | null
 }
 
 export const FUEL_LABELS: Record<FuelType, string> = {
@@ -355,6 +393,11 @@ export interface SharedBill {
    * `installments` = 1. Repete todo mês, sem fim, até ser cancelada.
    */
   recurring?: boolean | null
+  /**
+   * Gasto que o criador já pagou antes de dividir: o lado dele fica com o
+   * lançamento original e só o convidado lança o reembolso.
+   */
+  creatorPaid?: boolean | null
   /** Vencimento da 1ª parcela */
   firstDueDate: ISODate
   categoryId: Category['id']

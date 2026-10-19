@@ -89,6 +89,8 @@ export function buildSharedTransactions(bill: SharedBill, uid: string, now: stri
   const partner = partnerOf(bill, uid)
   if (!me || !partner) return []
   const reimbursing = bill.payerType === 'SINGLE_PAYER' && me.role === 'invitee'
+  // Já pago pelo criador: o lançamento dele é o original; só o convidado reembolsa.
+  if (bill.creatorPaid && me.role === 'creator') return []
   if (bill.recurring) {
     // Conta fixa: a mesma parte todo mês, sempre com os próximos meses lançados (como um fixo).
     const months = monthsFrom(bill.firstDueDate, now) + RECURRING_HORIZON_MONTHS
@@ -174,12 +176,17 @@ export interface SharedChanges {
  * - recusada/cancelada: apagar as parcelas não pagas.
  */
 export function reconcileShared(bill: SharedBill, uid: string, mine: Transaction[], now: string): SharedChanges {
-  const own = mine.filter((t) => t.sharedBillId === bill.id)
+  const linked = mine.filter((t) => t.sharedBillId === bill.id)
+  // Gasto original ligado à conta (criador já pagou): não é gerado por ela, nunca é apagado.
+  const original = linked.filter((t) => !t.id.startsWith('sb_'))
+  const own = linked.filter((t) => t.id.startsWith('sb_'))
   const unpaid = own.filter((t) => t.status !== 'pago')
   const none: SharedChanges = { upserts: [], deletes: [] }
 
   if (bill.status === 'REJECTED' || bill.status === 'CANCELLED') {
-    return unpaid.length ? { upserts: [], deletes: unpaid.map((t) => t.id) } : none
+    // Original volta a ser só seu.
+    const release = original.map((t) => ({ ...t, sharedBillId: null, sharedWith: null, sharedVersion: null, sharedSuspended: false }))
+    return unpaid.length || release.length ? { upserts: release, deletes: unpaid.map((t) => t.id) } : none
   }
 
   if (bill.status === 'PENDING') {

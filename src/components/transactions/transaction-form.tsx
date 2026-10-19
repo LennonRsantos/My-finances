@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Affix } from '@/components/ui/form-kit'
 import { ArrowDownRight, ArrowUpRight, Layers, Repeat } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm, useWatch, type DefaultValues } from 'react-hook-form'
@@ -335,8 +336,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         {/* Valor */}
         <div className="flex flex-col gap-2">
           <Label htmlFor="amount">{ongoing ? 'Valor da parcela' : isInstallment ? 'Valor total da compra' : 'Valor'}</Label>
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+          <Affix before="R$">
             <Input
               id="amount"
               inputMode="decimal"
@@ -346,7 +346,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
               aria-invalid={!!errors.amount}
               {...register('amount', { setValueAs: parseMoneyInput })}
             />
-          </div>
+          </Affix>
           <FieldError message={errors.amount?.message} />
         </div>
 

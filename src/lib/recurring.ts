@@ -13,8 +13,34 @@ export function occurrenceId(rc: RecurringCost, month: YearMonth) {
   return `${rc.id}_${month}`
 }
 
-function occursIn(rc: RecurringCost, month: YearMonth) {
+export function occursIn(rc: RecurringCost, month: YearMonth) {
   return rc.frequency === 'mensal' || Number(month.slice(5, 7)) === rc.dueMonth
+}
+
+/** Lançamento do fixo num mês (ou `null` se não vence nesse mês ou está fora do período). */
+export function occurrenceFor(rc: RecurringCost, month: YearMonth, createdAt = new Date().toISOString()): Transaction | null {
+  if (!occursIn(rc, month)) return null
+  const dueDate: ISODate = dateInMonth(month, rc.dueDay)
+  if (dueDate < rc.startDate || (rc.endDate && dueDate > rc.endDate)) return null
+  return {
+    id: occurrenceId(rc, month),
+    description: rc.description,
+    amount: rc.amount,
+    type: rc.type,
+    categoryId: rc.categoryId,
+    subcategoryId: rc.subcategoryId,
+    dueDate,
+    paymentDate: null,
+    status: 'pendente',
+    paymentMethod: rc.paymentMethod,
+    installment: null,
+    recurringCostId: rc.id,
+    payTo: rc.payTo ?? null,
+    payToUid: rc.payToUid ?? null,
+    payToHandle: rc.payToHandle ?? null,
+    vehicleId: rc.vehicleId ?? null,
+    createdAt,
+  }
 }
 
 /**
@@ -36,28 +62,8 @@ export function pendingOccurrences(
   const transactions: Transaction[] = []
 
   for (; month <= endMonth; month = shiftMonth(month, 1)) {
-    if (!occursIn(rc, month)) continue
-    const dueDate: ISODate = dateInMonth(month, rc.dueDay)
-    if (dueDate < rc.startDate || (rc.endDate && dueDate > rc.endDate)) continue
-    transactions.push({
-      id: occurrenceId(rc, month),
-      description: rc.description,
-      amount: rc.amount,
-      type: rc.type,
-      categoryId: rc.categoryId,
-      subcategoryId: rc.subcategoryId,
-      dueDate,
-      paymentDate: null,
-      status: 'pendente',
-      paymentMethod: rc.paymentMethod,
-      installment: null,
-      recurringCostId: rc.id,
-      payTo: rc.payTo ?? null,
-      payToUid: rc.payToUid ?? null,
-      payToHandle: rc.payToHandle ?? null,
-      vehicleId: rc.vehicleId ?? null,
-      createdAt,
-    })
+    const t = occurrenceFor(rc, month, createdAt)
+    if (t) transactions.push(t)
   }
 
   return { transactions, lastGeneratedMonth: endMonth }

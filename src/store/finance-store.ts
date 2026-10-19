@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Category, Debt, Installment, ISODate, MaintenanceReminder, RecurringCost, Subcategory, Transaction, Vehicle } from '@/types/finance'
+import type { Category, Cents, Debt, Installment, ISODate, MaintenanceQuote, MaintenanceReminder, MaintenanceUndo, RecurringCost, Subcategory, Transaction, Vehicle, YearMonth } from '@/types/finance'
 import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
 import { generateInstallments, type InstallmentPurchaseInput } from '@/lib/finance'
-import { addDaysISO, monthOf, shiftMonth, todayISO } from '@/lib/dates'
-import { pendingOccurrences } from '@/lib/recurring'
+import { addDaysISO, addMonthsISO, monthOf, shiftMonth, todayISO } from '@/lib/dates'
+import { createId } from '@/lib/utils'
+import { occurrenceFor, pendingOccurrences } from '@/lib/recurring'
 import { currentUid, reportSyncError } from './auth-store'
 import { localOnlyStorage } from './local-storage'
 import { useSettingsStore } from './settings-store'
@@ -78,6 +79,8 @@ interface FinanceState extends FinanceData {
   addRecurringCost: (rc: RecurringCost, firstPaid: boolean) => void
   /** Lança meses novos dos fixos ativos (rodar ao abrir o app). */
   materializeRecurring: () => void
+  /** Lança de novo o mês de um fixo que ficou sem lançamento (ex.: excluído sem querer). */
+  restoreOccurrence: (id: RecurringCost['id'], month: YearMonth) => void
   /**
    * Encerra o fixo e apaga ocorrências futuras ainda pendentes. Com `from`,
    * o último mês é o anterior a essa data (ocorrências pendentes desde ela somem).
@@ -90,6 +93,12 @@ interface FinanceState extends FinanceData {
   updateRecurringCost: (rc: RecurringCost) => void
   /** Grava um lançamento inteiro (edição de abastecimento e gasto do veículo). */
   saveTransaction: (t: Transaction) => void
+  /**
+   * Ajusta um parcelamento: valor da parcela, qual é a próxima a pagar e
+   * quantas são no total. Pagas ficam como estão (só a numeração acompanha);
+   * as pendentes são refeitas, uma por mês a partir da primeira pendente.
+   */
+  adjustInstallments: (installmentId: string, adjust: { amount: Cents; next: number; total: number }) => void
   /** Marca/desmarca parcelamento como conta fixa (fora do saldo devedor, sem "(n/N)" na descrição). */
   toggleFixedSeries: (installmentId: string) => void
   /** Tira o "(n/N)" das séries já marcadas como conta fixa (ex.: marcadas antes desta regra). */
@@ -138,6 +147,22 @@ interface FinanceState extends FinanceData {
   completeReminder: (id: MaintenanceReminder['id'], km: number | null, date: ISODate, expense?: Transaction, sharedBillId?: string) => void
   /** Volta a última marcação de feita: km e data anteriores, sem o gasto lançado junto. */
   undoReminder: (id: MaintenanceReminder['id']) => void
+  /** Grava (ou apaga, com `null`) o orçamento da manutenção. */
+  saveQuote: (id: MaintenanceReminder['id'], quote: MaintenanceQuote | null) => void
+  /**
+   * Conclui a manutenção no dia em que ficou pronta: registra data e km (base
+   * do próximo aviso), guarda no histórico, limpa vencimento direto e
+   * orçamento, e lança o gasto (avulso ou parcelado).
+   */
+  finishMaintenance: (id: MaintenanceReminder['id'], done: FinishMaintenance) => void
+}
+
+export interface FinishMaintenance {
+  date: ISODate
+  km: number | null
+  expense?: Transaction
+  purchase?: { installment: Installment; transactions: Transaction[] }
+  sharedBillId?: string | null
 }
 
 /** Começa vazio, só com as categorias padrão. */
@@ -231,6 +256,12 @@ export const useFinanceStore = create<FinanceState>()(
           })
         },
 
+        restoreOccurrence: (id, month) => {
+          const rc = get().recurringCosts.find((x) => x.id === id)
+          const t = rc && occurrenceFor(rc, month)
+          if (t) commit({ upserts: txWrites([t]) })
+        },
+
         materializeRecurring: () => {
           const upserts: cloud.DocWrite[] = []
           for (const rc of get().recurringCosts) {
@@ -275,6 +306,47 @@ export const useFinanceStore = create<FinanceState>()(
         },
 
         saveTransaction: (t) => commit({ upserts: txWrites([t]) }),
+
+        adjustInstallments: (installmentId, { amount, next, total }) => {
+          const { transactions, installments } = get()
+          const series = transactions
+            .filter((t) => t.installment?.installmentId === installmentId && !t.sharedBillId)
+            .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.installment!.number - b.installment!.number)
+          const sample = series[0]
+          if (!sample) return
+          const paid = series.filter((t) => t.status === 'pago')
+          const open = series.filter((t) => t.status !== 'pago')
+          const remaining = Math.max(0, total - next + 1)
+          const base = baseDescription(sample)
+          const fixed = isFixedSeries(sample)
+          const ref = (n: number) => ({ installmentId, number: n, total })
+          const label = (n: number) => (fixed ? base : `${base} (${n}/${total})`)
+          // Pagas: numeradas logo antes da próxima, na ordem das datas.
+          const paidWrites = paid.map((t, i) => {
+            const n = Math.max(1, next - paid.length + i)
+            return { ...t, description: label(n), installment: ref(n) }
+          })
+          const last = paid[paid.length - 1]
+          const start = open[0]?.dueDate ?? (last ? addMonthsISO(last.dueDate, 1) : sample.dueDate)
+          const template = open[0] ?? sample
+          const now = new Date().toISOString()
+          const openWrites: Transaction[] = Array.from({ length: remaining }, (_, i) => {
+            const n = next + i
+            const current = open[i] ?? { ...template, id: createId(), status: 'pendente' as const, paymentDate: null, odometer: null, createdAt: now }
+            return { ...current, amount, dueDate: addMonthsISO(start, i), description: label(n), installment: ref(n) }
+          })
+          const inst = installments.find((i) => i.id === installmentId)
+          commit({
+            upserts: [
+              ...txWrites([...paidWrites, ...openWrites]),
+              ...(inst
+                ? [{ name: 'installments' as const, data: { ...inst, totalInstallments: total, currentInstallment: next, installmentAmount: amount, totalAmount: amount * total } }]
+                : []),
+            ],
+            // Pendentes que sobraram (agora são menos parcelas).
+            deletes: open.slice(remaining).map((t) => ({ name: 'transactions' as const, id: t.id })),
+          })
+        },
 
         toggleFixedSeries: (id) => {
           const settings = useSettingsStore.getState()
@@ -468,9 +540,10 @@ export const useFinanceStore = create<FinanceState>()(
           const r = get().maintenance.find((x) => x.id === id)
           if (!r) return
           const undo = { lastKm: r.lastKm, lastDate: r.lastDate, transactionId: expense?.id ?? null, sharedBillId: sharedBillId ?? null }
+          const history = [{ date, km, amount: expense?.amount ?? null, installments: 1 }, ...(r.history ?? [])]
           commit({
             upserts: [
-              { name: 'maintenance', data: { ...r, lastKm: km ?? r.lastKm, lastDate: date, undo } },
+              { name: 'maintenance', data: { ...r, lastKm: km ?? r.lastKm, lastDate: date, history, undo } },
               ...(expense ? [...vehicleCategoryWrites(get()), ...txWrites([expense])] : []),
             ],
           })
@@ -480,9 +553,62 @@ export const useFinanceStore = create<FinanceState>()(
           const { maintenance, transactions } = get()
           const r = maintenance.find((x) => x.id === id)
           if (!r?.undo) return
-          const { lastKm, lastDate, transactionId } = r.undo
-          const tx = transactionId && transactions.some((t) => t.id === transactionId) ? [{ name: 'transactions' as const, id: transactionId }] : []
-          commit({ upserts: [{ name: 'maintenance', data: { ...r, lastKm, lastDate, undo: null } }], deletes: tx })
+          const { lastKm, lastDate, transactionId, transactionIds = [], installmentId } = r.undo
+          const ids = new Set([transactionId, ...transactionIds].filter((x): x is string => !!x))
+          const deletes: cloud.DocRef[] = transactions.filter((t) => ids.has(t.id)).map((t) => ({ name: 'transactions', id: t.id }))
+          if (installmentId) deletes.push({ name: 'installments', id: installmentId })
+          const restored: MaintenanceReminder = {
+            ...r,
+            lastKm,
+            lastDate,
+            // Conclusão nova (com histórico): devolve vencimento e orçamento de antes.
+            ...('quote' in r.undo ? { dueKm: r.undo.dueKm ?? null, dueDate: r.undo.dueDate ?? null, quote: r.undo.quote ?? null } : {}),
+            history: (r.history ?? []).slice(1),
+            undo: null,
+          }
+          commit({ upserts: [{ name: 'maintenance', data: restored }], deletes })
+        },
+
+        saveQuote: (id, quote) => {
+          const r = get().maintenance.find((x) => x.id === id)
+          if (r) commit({ upserts: [{ name: 'maintenance', data: { ...r, quote } }] })
+        },
+
+        finishMaintenance: (id, done) => {
+          const state = get()
+          const r = state.maintenance.find((x) => x.id === id)
+          if (!r) return
+          const generated = done.purchase?.transactions ?? (done.expense ? [done.expense] : [])
+          const amount = generated.length ? generated.reduce((a, t) => a + t.amount, 0) : null
+          const undo: MaintenanceUndo = {
+            lastKm: r.lastKm,
+            lastDate: r.lastDate,
+            transactionId: null,
+            sharedBillId: done.sharedBillId ?? null,
+            transactionIds: generated.map((t) => t.id),
+            installmentId: done.purchase?.installment.id ?? null,
+            dueKm: r.dueKm ?? null,
+            dueDate: r.dueDate ?? null,
+            quote: r.quote ?? null,
+          }
+          const next: MaintenanceReminder = {
+            ...r,
+            lastKm: done.km ?? r.lastKm,
+            lastDate: done.date,
+            dueKm: null,
+            dueDate: null,
+            quote: null,
+            history: [{ date: done.date, km: done.km, amount, installments: done.purchase?.installment.totalInstallments ?? 1 }, ...(r.history ?? [])],
+            undo,
+          }
+          commit({
+            upserts: [
+              { name: 'maintenance', data: next },
+              ...(generated.length ? vehicleCategoryWrites(state) : []),
+              ...(done.purchase ? [{ name: 'installments' as const, data: done.purchase.installment }] : []),
+              ...txWrites(generated),
+            ],
+          })
         },
       }
     },

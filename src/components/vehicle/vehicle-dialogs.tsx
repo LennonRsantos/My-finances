@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Trash2 } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
@@ -14,12 +14,14 @@ import {
   sendShareInvite,
   useShare,
   yearlyShareNote,
+  type ShareState,
 } from '@/components/shared/share-fields'
 import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
+import { AdjustInstallments } from '@/components/transactions/adjust-installments'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
-import { todayISO } from '@/lib/dates'
+import { formatDateShort, todayISO } from '@/lib/dates'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { cents, date, km, nowISO, optionalMoney, requiredKm, money, toKm } from '@/lib/form-fields'
 import { parseMoneyInput } from '@/lib/schemas'
@@ -30,6 +32,7 @@ import {
   DEFAULT_REMINDERS,
   cycleLabel,
   formatKm,
+  quoteTotal,
   kmPerMonth,
   reminderSaving,
   DOCUMENT_PRESETS,
@@ -49,7 +52,9 @@ import {
   FUEL_TYPES,
   PAYMENT_METHODS,
   VEHICLE_KINDS,
+  type Cents,
   type FuelType,
+  type Installment,
   type ISODate,
   type MaintenanceReminder,
   type PaymentMethod,
@@ -65,6 +70,7 @@ export type VehicleDialogState =
   | { kind: 'financing'; vehicle: Vehicle }
   | { kind: 'reminder'; vehicle: Vehicle; currentKm: number; reminder?: MaintenanceReminder }
   | { kind: 'complete'; vehicle: Vehicle; currentKm: number; reminder: MaintenanceReminder }
+  | { kind: 'quote'; vehicle: Vehicle; reminder: MaintenanceReminder }
   | { kind: 'document'; vehicle: Vehicle; preset: DocumentPreset }
   | null
 
@@ -296,7 +302,19 @@ const moneyText = (c: number) => fromCents(c).toFixed(2).replace('.', ',')
 /** Edição: mantém id, criação e vínculos (parcela, fixo) do lançamento original. */
 const keepIdentity = (original: Transaction | undefined, next: Transaction): Transaction =>
   original
-    ? { ...next, id: original.id, createdAt: original.createdAt, installment: original.installment, recurringCostId: original.recurringCostId, payTo: original.payTo ?? null, notes: original.notes }
+    ? {
+        ...next,
+        id: original.id,
+        createdAt: original.createdAt,
+        installment: original.installment,
+        recurringCostId: original.recurringCostId,
+        payTo: original.payTo ?? null,
+        notes: original.notes,
+        sharedBillId: original.sharedBillId ?? null,
+        sharedWith: original.sharedWith ?? null,
+        sharedVersion: original.sharedVersion ?? null,
+        sharedSuspended: original.sharedSuspended ?? false,
+      }
     : next
 
 /** Rodapé de edição: salvar, ou excluir com confirmação. */
@@ -465,6 +483,83 @@ function FuelForm({ vehicle, currentKm, transaction, onDone }: { vehicle: Vehicl
 // Outro gasto
 // ---------------------------------------------------------------------------
 
+interface ChargeInput {
+  description: string
+  total: Cents
+  installments: number
+  date: ISODate
+  subcategoryId: string
+  paymentMethod: PaymentMethod
+  paid: boolean
+  odometer: number | null
+  notes?: string
+  /** Dividir: convite com as parcelas (ficam pendentes no seu nome até o aceite) */
+  share: ShareState | null
+}
+
+type Charge = {
+  expense?: Transaction
+  purchase?: { installment: Installment; transactions: Transaction[] }
+  sharedBillId?: string
+}
+
+/**
+ * Monta o gasto do veículo: avulso ou parcelado (uma parcela por mês a partir
+ * da data; `total` é o valor todo). Dividindo, envia o convite antes: em erro,
+ * nada é criado. `keep`: edição de um avulso (mantém id e vínculos).
+ */
+async function vehicleCharge(vehicle: Vehicle, c: ChargeInput, keep?: Transaction): Promise<Charge | { error: string }> {
+  // Dividido: fica pendente no seu nome até a pessoa aceitar; aí vira a parte dividida.
+  const paid = c.paid && !c.share
+  let charge: Charge
+  if (c.installments > 1) {
+    const purchase = generateInstallments({
+      description: c.description,
+      totalAmount: c.total,
+      totalInstallments: c.installments,
+      firstDueDate: c.date,
+      categoryId: VEHICLE_CATEGORY_ID,
+      subcategoryId: c.subcategoryId,
+      paymentMethod: c.paymentMethod,
+      accountName: '',
+      firstPaid: paid,
+      notes: c.notes,
+      vehicleId: vehicle.id,
+    })
+    // O km fica na 1ª parcela (entra no histórico de hodômetro).
+    const [first, ...rest] = purchase.transactions
+    if (first) purchase.transactions = [{ ...first, odometer: c.odometer }, ...rest]
+    charge = { purchase }
+  } else {
+    const single = expense(vehicle, {
+      description: c.description,
+      amount: c.total,
+      subcategoryId: c.subcategoryId,
+      dueDate: c.date,
+      paymentMethod: c.paymentMethod,
+      odometer: c.odometer,
+      paid,
+    })
+    charge = { expense: keepIdentity(keep, c.notes ? { ...single, notes: c.notes } : single) }
+  }
+  if (c.share) {
+    const ids = charge.purchase ? charge.purchase.transactions.map((t) => t.id) : [charge.expense!.id]
+    const result = await sendShareInvite(c.share, {
+      title: c.description,
+      totalAmount: c.total,
+      installments: c.installments,
+      firstDueDate: c.date,
+      categoryId: VEHICLE_CATEGORY_ID,
+      subcategoryId: c.subcategoryId,
+      vehicleId: vehicle.id,
+      replaces: { transactionIds: ids },
+    })
+    if ('error' in result) return { error: result.error }
+    charge.sharedBillId = result.id
+  }
+  return charge
+}
+
 const expenseSchema = z.object({
   subcategoryId: z.string().min(1, 'Escolha o tipo'),
   description: z.string().trim().min(2, 'Descreva o gasto').max(80, 'Máximo de 80 caracteres'),
@@ -473,6 +568,7 @@ const expenseSchema = z.object({
   odometer: km,
   paid: z.boolean(),
   paymentMethod: z.enum(PAYMENT_METHODS),
+  installments: z.string().trim().refine((v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 120, 'De 1 a 120'),
 })
 
 function ExpenseForm({
@@ -488,6 +584,8 @@ function ExpenseForm({
 }) {
   const add = useFinanceStore((s) => s.addVehicleExpense)
   const save = useFinanceStore((s) => s.saveTransaction)
+  const savePurchase = useFinanceStore((s) => s.saveInstallmentPurchase)
+  const remove = useFinanceStore((s) => s.removeTransaction)
   const subcategories = useFinanceStore((s) => s.subcategories)
   const options = subcategories
     .filter((sc) => sc.categoryId === VEHICLE_CATEGORY_ID && sc.id !== FUEL_SUBCATEGORY_ID && sc.id !== VEHICLE_FINANCING_SUBCATEGORY_ID)
@@ -506,6 +604,7 @@ function ExpenseForm({
           odometer: transaction.odometer != null ? String(transaction.odometer) : '',
           paid: transaction.status === 'pago',
           paymentMethod: (transaction.paymentMethod ?? 'pix') as PaymentMethod,
+          installments: '1',
         }
       : {
           subcategoryId: initialSub ?? '',
@@ -515,10 +614,17 @@ function ExpenseForm({
           odometer: '',
           paid: true,
           paymentMethod: 'pix' as PaymentMethod,
+          installments: '1',
         },
   })
-  const [subcategoryId, paid, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'paid', 'paymentMethod'] })
+  const [subcategoryId, paid, paymentMethod, amount, installmentsText] = useWatch({
+    control,
+    name: ['subcategoryId', 'paid', 'paymentMethod', 'amount', 'installments'],
+  })
   const sharing = !transaction && shareAvailable && share.on
+  // Parcelar: gasto novo, ou um já lançado que ainda é avulso (não parcela, fixo ou dividido).
+  const canParcel = !transaction || (!transaction.installment && !transaction.recurringCostId && !transaction.sharedBillId)
+  const parcels = canParcel && /^\d+$/.test(installmentsText) ? Number(installmentsText) : 1
   const e = formState.errors
 
   return (
@@ -526,34 +632,30 @@ function ExpenseForm({
       noValidate
       className={formClass}
       onSubmit={handleSubmit(async (v) => {
-        const next = keepIdentity(
-          transaction,
-          expense(vehicle, {
+        const charge = await vehicleCharge(
+          vehicle,
+          {
             description: v.description,
-            amount: cents(v.amount),
+            total: cents(v.amount),
+            installments: canParcel ? Number(v.installments) : 1,
+            date: v.date as ISODate,
             subcategoryId: v.subcategoryId,
-            dueDate: v.date as ISODate,
             paymentMethod: v.paymentMethod,
+            paid: v.paid,
             odometer: toKm(v.odometer),
-            // Dividido: fica pendente no seu nome até a pessoa aceitar; aí vira a parte dividida.
-            paid: v.paid && !sharing,
-          }),
+            share: sharing ? share : null,
+          },
+          transaction,
         )
-        if (sharing) {
-          const result = await sendShareInvite(share, {
-            title: v.description,
-            totalAmount: cents(v.amount),
-            installments: 1,
-            firstDueDate: v.date as ISODate,
-            categoryId: VEHICLE_CATEGORY_ID,
-            subcategoryId: v.subcategoryId,
-            vehicleId: vehicle.id,
-            replaces: { transactionIds: [next.id] },
-          })
-          if ('error' in result) return setShare({ ...share, error: result.error })
+        if ('error' in charge) return setShare({ ...share, error: charge.error })
+        if (charge.purchase) {
+          savePurchase(charge.purchase)
+          // Gasto avulso que virou parcelado: as parcelas tomam o lugar dele.
+          if (transaction) remove(transaction.id)
+        } else if (charge.expense) {
+          if (transaction) save(charge.expense)
+          else add(charge.expense)
         }
-        if (transaction) save(next)
-        else add(next)
         onDone()
       })}
     >
@@ -578,7 +680,7 @@ function ExpenseForm({
           <Input id="e-desc" aria-invalid={!!e.description} {...register('description')} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field id="e-amount" label="Valor" error={e.amount?.message}>
+          <Field id="e-amount" label={parcels > 1 ? 'Valor total' : 'Valor'} error={e.amount?.message}>
             <Affix before="R$">
               <Input id="e-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
             </Affix>
@@ -587,15 +689,29 @@ function ExpenseForm({
             <Input id="e-date" type="date" aria-invalid={!!e.date} {...register('date')} />
           </Field>
         </div>
-        <Field id="e-km" label="Km no painel (opcional)" error={e.odometer?.message}>
-          <Affix after="km">
-            <Input id="e-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.odometer} {...register('odometer')} />
-          </Affix>
-        </Field>
+        <div className={cn('grid gap-3', canParcel && 'grid-cols-2')}>
+          <Field id="e-km" label="Km no painel (opcional)" error={e.odometer?.message}>
+            <Affix after="km">
+              <Input id="e-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.odometer} {...register('odometer')} />
+            </Affix>
+          </Field>
+          {canParcel && (
+            <Field id="e-parcels" label="Parcelas" error={e.installments?.message}>
+              <Affix after="x">
+                <Input id="e-parcels" inputMode="numeric" className="pr-8" aria-invalid={!!e.installments} {...register('installments')} />
+              </Affix>
+            </Field>
+          )}
+        </div>
+        {parcels > 1 && cents(amount) > 0 && (
+          <p className="-mt-3 text-xs text-muted-foreground">
+            {parcels}x de {formatMoney(Math.round(cents(amount) / parcels))}, uma por mês a partir da data.
+          </p>
+        )}
         {!sharing && (
           <label className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium">Já pago</span>
-            <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label="Já pago" />
+            <span className="text-sm font-medium">{parcels > 1 ? '1ª parcela já paga' : 'Já pago'}</span>
+            <Switch checked={paid} onCheckedChange={(v) => setValue('paid', v)} aria-label={parcels > 1 ? '1ª parcela já paga' : 'Já pago'} />
           </label>
         )}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
@@ -603,7 +719,9 @@ function ExpenseForm({
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
         {!transaction && shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir este gasto" note={pendingShareNote} />}
-        {transaction && canShareExisting(transaction, signedIn) && <ShareExisting transaction={transaction} />}
+        {transaction?.installment && !transaction.sharedBillId && <AdjustInstallments transaction={transaction} onDone={onDone} />}
+        {transaction && parcels > 1 && <p className="text-xs text-muted-foreground">Salve as parcelas; depois abra uma delas para dividir.</p>}
+        {transaction && parcels === 1 && canShareExisting(transaction, signedIn) && <ShareExisting transaction={transaction} />}
       </div>
       <EditActions submitLabel={sharing ? 'Salvar e enviar convite' : 'Salvar gasto'} transaction={transaction} onDone={onDone} />
     </form>
@@ -614,16 +732,24 @@ function ExpenseForm({
 // Lembrete de manutenção
 // ---------------------------------------------------------------------------
 
+const optionalDate = z.string().refine((v) => v === '' || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Data inválida')
+
 const reminderSchema = z
   .object({
     name: z.string().trim().min(2, 'Dê um nome').max(60, 'Máximo de 60 caracteres'),
+    /** "proxima": informa quando vence; "ultima": informa a última vez e o prazo vem do intervalo */
+    mode: z.enum(['proxima', 'ultima']),
+    dueKm: km,
+    dueDate: optionalDate,
     intervalKm: km,
     intervalMonths: z.string().trim().refine((v) => v === '' || (/^\d+$/.test(v) && Number(v) > 0), 'Use meses inteiros'),
     lastKm: km,
-    lastDate: date,
+    lastDate: optionalDate,
     estimatedCost: optionalMoney,
   })
-  .refine((v) => v.intervalKm !== '' || v.intervalMonths !== '', { path: ['intervalKm'], message: 'Informe km, meses ou os dois' })
+  .refine((v) => v.mode !== 'proxima' || v.dueKm !== '' || v.dueDate !== '', { path: ['dueKm'], message: 'Informe o km, a data ou os dois' })
+  .refine((v) => v.mode !== 'ultima' || v.intervalKm !== '' || v.intervalMonths !== '', { path: ['intervalKm'], message: 'Informe km, meses ou os dois' })
+  .refine((v) => v.mode !== 'ultima' || v.lastDate !== '', { path: ['lastDate'], message: 'Informe a data' })
 
 function ReminderForm({
   vehicle,
@@ -645,6 +771,10 @@ function ReminderForm({
     resolver: zodResolver(reminderSchema),
     defaultValues: {
       name: reminder?.name ?? '',
+      // Lembrete novo começa por "quando vence"; antigo, como foi cadastrado.
+      mode: (!reminder || reminder.dueKm != null || reminder.dueDate ? 'proxima' : 'ultima') as 'proxima' | 'ultima',
+      dueKm: reminder?.dueKm != null ? String(reminder.dueKm) : '',
+      dueDate: reminder?.dueDate ?? '',
       intervalKm: reminder?.intervalKm ? String(reminder.intervalKm) : '',
       intervalMonths: reminder?.intervalMonths ? String(reminder.intervalMonths) : '',
       lastKm: String(reminder?.lastKm ?? currentKm),
@@ -654,17 +784,21 @@ function ReminderForm({
   })
   const e = formState.errors
   const presets = DEFAULT_REMINDERS.filter((p) => !existing.includes(p.name))
-  const [wKm, wMonths, wLastKm, wLastDate, wCost] = useWatch({
+  const [wKm, wMonths, wLastKm, wLastDate, wCost, mode, wDueKm, wDueDate] = useWatch({
     control,
-    name: ['intervalKm', 'intervalMonths', 'lastKm', 'lastDate', 'estimatedCost'],
+    name: ['intervalKm', 'intervalMonths', 'lastKm', 'lastDate', 'estimatedCost', 'mode', 'dueKm', 'dueDate'],
   })
+  const byDue = mode === 'proxima'
+  const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v)
   // Prévia ao vivo: quanto guardar por mês com os valores digitados.
   const saving = reminderSaving(
     {
       intervalKm: toKm(wKm),
       intervalMonths: /^\d+$/.test(wMonths) && Number(wMonths) > 0 ? Number(wMonths) : null,
-      lastKm: toKm(wLastKm),
-      lastDate: /^\d{4}-\d{2}-\d{2}$/.test(wLastDate) ? (wLastDate as ISODate) : null,
+      lastKm: byDue ? (reminder?.lastKm ?? null) : toKm(wLastKm),
+      lastDate: byDue ? (reminder?.lastDate ?? null) : isDate(wLastDate) ? (wLastDate as ISODate) : null,
+      dueKm: byDue ? toKm(wDueKm) : null,
+      dueDate: byDue && isDate(wDueDate) ? (wDueDate as ISODate) : null,
       estimatedCost: wCost ? cents(wCost) : null,
     },
     currentKm,
@@ -677,14 +811,19 @@ function ReminderForm({
       noValidate
       className={formClass}
       onSubmit={handleSubmit((v) => {
+        const proxima = v.mode === 'proxima'
         saveReminder({
+          // Mantém orçamento, histórico e desfazer do lembrete.
+          ...reminder,
           id: reminder?.id ?? createId(),
           vehicleId: vehicle.id,
           name: v.name,
           intervalKm: toKm(v.intervalKm),
           intervalMonths: v.intervalMonths ? Number(v.intervalMonths) : null,
-          lastKm: toKm(v.lastKm),
-          lastDate: v.lastDate as ISODate,
+          lastKm: proxima ? (reminder?.lastKm ?? null) : toKm(v.lastKm),
+          lastDate: proxima ? (reminder?.lastDate ?? null) : (v.lastDate as ISODate),
+          dueKm: proxima ? toKm(v.dueKm) : null,
+          dueDate: proxima && v.dueDate ? (v.dueDate as ISODate) : null,
           estimatedCost: v.estimatedCost ? cents(v.estimatedCost) : null,
           createdAt: reminder?.createdAt ?? nowISO(),
         })
@@ -717,8 +856,46 @@ function ReminderForm({
         <Field id="r-name" label="Manutenção" error={e.name?.message}>
           <Input id="r-name" aria-invalid={!!e.name} {...register('name')} />
         </Field>
+        <div className="flex flex-col gap-2">
+          <Label>Quando vence</Label>
+          <Choices
+            label="Quando vence"
+            value={mode}
+            onChange={(x) => setValue('mode', x, { shouldValidate: formState.isSubmitted })}
+            options={[
+              { value: 'proxima', label: 'Próxima em' },
+              { value: 'ultima', label: 'Pela última vez' },
+            ]}
+          />
+        </div>
+        {byDue ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field id="r-due-km" label="Com" error={e.dueKm?.message}>
+                <Affix after="km">
+                  <Input id="r-due-km" inputMode="numeric" className="pr-10" placeholder="Ex.: 60000" aria-invalid={!!e.dueKm} {...register('dueKm')} />
+                </Affix>
+              </Field>
+              <Field id="r-due-date" label="ou em" error={e.dueDate?.message}>
+                <Input id="r-due-date" type="date" aria-invalid={!!e.dueDate} {...register('dueDate')} />
+              </Field>
+            </div>
+            <p className="-mt-3 text-xs text-muted-foreground">Avisa no que chegar primeiro. Hoje o painel marca {formatKm(currentKm)}.</p>
+          </>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field id="r-last-km" label="Última vez, km" error={e.lastKm?.message}>
+              <Affix after="km">
+                <Input id="r-last-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.lastKm} {...register('lastKm')} />
+              </Affix>
+            </Field>
+            <Field id="r-last-date" label="Última vez, data" error={e.lastDate?.message}>
+              <Input id="r-last-date" type="date" aria-invalid={!!e.lastDate} {...register('lastDate')} />
+            </Field>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
-          <Field id="r-km" label="A cada" error={e.intervalKm?.message}>
+          <Field id="r-km" label={byDue ? 'Depois, repete a cada' : 'A cada'} error={e.intervalKm?.message}>
             <Affix after="km">
               <Input id="r-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.intervalKm} {...register('intervalKm')} />
             </Affix>
@@ -729,17 +906,11 @@ function ReminderForm({
             </Affix>
           </Field>
         </div>
-        <p className="-mt-3 text-xs text-muted-foreground">Vale o que chegar primeiro. Confira os intervalos no manual do veículo.</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field id="r-last-km" label="Última vez, km" error={e.lastKm?.message}>
-            <Affix after="km">
-              <Input id="r-last-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.lastKm} {...register('lastKm')} />
-            </Affix>
-          </Field>
-          <Field id="r-last-date" label="Última vez, data" error={e.lastDate?.message}>
-            <Input id="r-last-date" type="date" aria-invalid={!!e.lastDate} {...register('lastDate')} />
-          </Field>
-        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {byDue
+            ? 'Opcional: ao concluir, o próximo aviso conta a partir do km e da data em que ficou pronta.'
+            : 'Vale o que chegar primeiro. Confira os intervalos no manual do veículo.'}
+        </p>
         <Field
           id="r-cost"
           label="Quanto custa (opcional)"
@@ -769,6 +940,24 @@ function ReminderForm({
             )}
           </div>
         )}
+        {reminder?.history && reminder.history.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Label>Histórico</Label>
+            <ul className="flex flex-col divide-y rounded-xl border text-sm">
+              {reminder.history.map((h, k) => (
+                <li key={`${h.date}-${k}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <span>
+                    {formatDateShort(h.date)}
+                    {h.km != null && <span className="text-muted-foreground"> · {formatKm(h.km)}</span>}
+                  </span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {h.amount ? `${formatMoney(h.amount)}${h.installments > 1 ? ` em ${h.installments}x` : ''}` : 'sem custo'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
       <FormActions
         submitLabel={reminder ? 'Salvar' : 'Criar lembrete'}
@@ -794,17 +983,162 @@ function ReminderForm({
   )
 }
 
-const completeSchema = z.object({ km, date, amount: optionalMoney, paymentMethod: z.enum(PAYMENT_METHODS) })
+// ---------------------------------------------------------------------------
+// Orçamento da manutenção
+// ---------------------------------------------------------------------------
 
+const installmentsField = z.string().trim().refine((v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 120, 'De 1 a 120')
+
+const quoteSchema = z.object({
+  items: z
+    .array(z.object({ name: z.string().trim().min(1, 'O que é').max(60, 'Máximo de 60 caracteres'), amount: money('Valor') }))
+    .min(1, 'Inclua ao menos um item'),
+  installments: installmentsField,
+  paymentMethod: z.enum(PAYMENT_METHODS),
+})
+
+/** Orçamento da oficina em itens (peça + peça + serviço); o gasto só entra ao concluir. */
+function QuoteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone: () => void }) {
+  const saveQuote = useFinanceStore((s) => s.saveQuote)
+  const q = reminder.quote
+  const { register, handleSubmit, control, setValue, formState } = useForm({
+    resolver: zodResolver(quoteSchema),
+    defaultValues: {
+      items: q?.items.length ? q.items.map((i) => ({ name: i.name, amount: moneyText(i.amount) })) : [{ name: '', amount: '' }],
+      installments: String(q?.installments ?? 1),
+      paymentMethod: (q?.paymentMethod ?? 'pix') as PaymentMethod,
+    },
+  })
+  const { fields, append, remove } = useFieldArray({ control, name: 'items' })
+  const [items, installments, paymentMethod] = useWatch({ control, name: ['items', 'installments', 'paymentMethod'] })
+  const total = items.reduce((a, i) => a + cents(i.amount ?? ''), 0)
+  const n = /^\d+$/.test(installments) ? Number(installments) : 1
+  const e = formState.errors
+
+  return (
+    <form
+      noValidate
+      className={formClass}
+      onSubmit={handleSubmit((v) => {
+        saveQuote(reminder.id, {
+          items: v.items.map((i, k) => ({ id: q?.items[k]?.id ?? createId(), name: i.name, amount: cents(i.amount) })),
+          installments: Number(v.installments),
+          paymentMethod: v.paymentMethod,
+          updatedAt: nowISO(),
+        })
+        onDone()
+      })}
+    >
+      <div className={bodyClass}>
+        <div className="flex flex-col gap-2">
+          <Label>Itens</Label>
+          <ul className="flex flex-col gap-2">
+            {fields.map((f, k) => (
+              <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_9.5rem_auto] items-start gap-2">
+                <div className="flex flex-col gap-1">
+                  <Input aria-label={`Item ${k + 1}`} placeholder={k === 0 ? 'Ex.: Óleo 5W30' : 'Peça ou serviço'} aria-invalid={!!e.items?.[k]?.name} {...register(`items.${k}.name`)} />
+                  <FieldError message={e.items?.[k]?.name?.message} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Affix before="R$">
+                    <Input aria-label={`Valor do item ${k + 1}`} inputMode="decimal" className="pl-10" aria-invalid={!!e.items?.[k]?.amount} {...register(`items.${k}.amount`)} />
+                  </Affix>
+                  <FieldError message={e.items?.[k]?.amount?.message} />
+                </div>
+                <Button type="button" variant="ghost" size="icon" aria-label={`Tirar item ${k + 1}`} disabled={fields.length === 1} onClick={() => remove(k)}>
+                  <X />
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => append({ name: '', amount: '' })}>
+            <Plus />
+            Peça ou serviço
+          </Button>
+          <FieldError message={e.items?.root?.message ?? e.items?.message} />
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-muted/50 px-3 py-2.5">
+          <span className="text-sm font-medium">Total</span>
+          <span className="text-lg font-semibold tabular-nums">{formatMoney(total)}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="q-parcels" label="Parcelas" error={e.installments?.message}>
+            <Affix after="x">
+              <Input id="q-parcels" inputMode="numeric" className="pr-8" aria-invalid={!!e.installments} {...register('installments')} />
+            </Affix>
+          </Field>
+          <div className="flex flex-col justify-end pb-3 text-xs text-muted-foreground">{n > 1 && total > 0 ? `${n}x de ${formatMoney(Math.round(total / n))}` : 'À vista'}</div>
+        </div>
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+          <Label>Pagamento</Label>
+          <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+        </div>
+        <p className="text-xs text-muted-foreground">O gasto entra em Lançamentos quando você concluir a manutenção. Lá dá para dividir com alguém.</p>
+      </div>
+      <FormActions
+        submitLabel="Salvar orçamento"
+        extra={
+          q ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="text-expense"
+              aria-label="Excluir orçamento"
+              onClick={() => {
+                saveQuote(reminder.id, null)
+                onDone()
+              }}
+            >
+              <Trash2 />
+            </Button>
+          ) : undefined
+        }
+      />
+    </form>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Concluir manutenção
+// ---------------------------------------------------------------------------
+
+const completeSchema = z.object({
+  date,
+  km: requiredKm,
+  amount: optionalMoney,
+  installments: installmentsField,
+  paid: z.boolean(),
+  paymentMethod: z.enum(PAYMENT_METHODS),
+})
+
+/**
+ * Concluir no dia em que pegou o carro: data e km do painel (base do próximo
+ * aviso). Com orçamento ou valor, o gasto entra em Lançamentos (avulso ou
+ * parcelado) e pode ser dividido.
+ */
 function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehicle; currentKm: number; reminder: MaintenanceReminder; onDone: () => void }) {
-  const complete = useFinanceStore((s) => s.completeReminder)
+  const finish = useFinanceStore((s) => s.finishMaintenance)
   const { share, setShare, available: shareAvailable } = useShare()
+  const q = reminder.quote
+  const qTotal = quoteTotal(q)
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(completeSchema),
-    defaultValues: { km: String(currentKm), date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod },
+    defaultValues: {
+      date: todayISO(),
+      km: currentKm ? String(currentKm) : '',
+      amount: '',
+      installments: String(q?.installments ?? 1),
+      paid: true,
+      paymentMethod: (q?.paymentMethod ?? 'pix') as PaymentMethod,
+    },
   })
-  const [paymentMethod, amount] = useWatch({ control, name: ['paymentMethod', 'amount'] })
-  const sharing = shareAvailable && share.on && cents(amount) > 0
+  const [amount, installments, paid, paymentMethod, kmText] = useWatch({ control, name: ['amount', 'installments', 'paid', 'paymentMethod', 'km'] })
+  const total = q ? qTotal : cents(amount)
+  const n = /^\d+$/.test(installments) ? Number(installments) : 1
+  const sharing = shareAvailable && share.on && total > 0
+  const typedKm = toKm(kmText)
+  const kmBehind = typedKm !== null && reminder.lastKm != null && typedKm < reminder.lastKm
   const e = formState.errors
 
   return (
@@ -812,66 +1146,93 @@ function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehic
       noValidate
       className={formClass}
       onSubmit={handleSubmit(async (v) => {
-        const value = v.amount ? cents(v.amount) : 0
-        // Dividido: o custo vira convite; a manutenção é marcada como feita do mesmo jeito.
-        const shared = sharing && value > 0
-        let sharedBillId: string | undefined
-        if (shared) {
-          const result = await sendShareInvite(share, {
-            title: reminder.name,
-            totalAmount: value,
-            installments: 1,
-            firstDueDate: v.date as ISODate,
-            categoryId: VEHICLE_CATEGORY_ID,
+        const value = q ? qTotal : v.amount ? cents(v.amount) : 0
+        const kmDone = toKm(v.km)
+        let charge: Awaited<ReturnType<typeof vehicleCharge>> | null = null
+        if (value > 0) {
+          charge = await vehicleCharge(vehicle, {
+            description: reminder.name,
+            total: value,
+            installments: Number(v.installments),
+            date: v.date as ISODate,
             subcategoryId: MAINTENANCE_SUBCATEGORY_ID,
-            vehicleId: vehicle.id,
+            paymentMethod: v.paymentMethod,
+            paid: v.paid,
+            odometer: kmDone,
+            notes: q ? q.items.map((i) => `${i.name}: ${formatMoney(i.amount)}`).join(' · ').slice(0, 200) : undefined,
+            share: sharing ? share : null,
           })
-          if ('error' in result) return setShare({ ...share, error: result.error })
-          sharedBillId = result.id
+          if ('error' in charge) return setShare({ ...share, error: charge.error })
         }
-        complete(
-          reminder.id,
-          toKm(v.km),
-          v.date as ISODate,
-          value > 0 && !shared
-            ? expense(vehicle, {
-                description: reminder.name,
-                amount: value,
-                subcategoryId: MAINTENANCE_SUBCATEGORY_ID,
-                dueDate: v.date as ISODate,
-                paymentMethod: v.paymentMethod,
-                odometer: toKm(v.km),
-                paid: true,
-              })
-            : undefined,
-          sharedBillId,
-        )
+        finish(reminder.id, {
+          date: v.date as ISODate,
+          km: kmDone,
+          expense: charge?.expense,
+          purchase: charge?.purchase,
+          sharedBillId: charge?.sharedBillId ?? null,
+        })
         onDone()
       })}
     >
       <div className={bodyClass}>
         <div className="grid grid-cols-2 gap-3">
+          <Field id="c-date" label="Ficou pronta em" error={e.date?.message}>
+            <Input id="c-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
           <Field id="c-km" label="Km no painel" error={e.km?.message}>
             <Affix after="km">
               <Input id="c-km" inputMode="numeric" className="pr-10" aria-invalid={!!e.km} {...register('km')} />
             </Affix>
           </Field>
-          <Field id="c-date" label="Data" error={e.date?.message}>
-            <Input id="c-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+        </div>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          {kmBehind ? `Atenção: menor que na última vez (${formatKm(reminder.lastKm!)}).` : 'O próximo aviso conta a partir deste km e desta data.'}
+        </p>
+        {q ? (
+          <div className="flex flex-col gap-1.5 rounded-xl border p-3 text-sm">
+            {q.items.map((i) => (
+              <div key={i.id} className="flex justify-between gap-3">
+                <span className="min-w-0 truncate text-muted-foreground">{i.name}</span>
+                <span className="shrink-0 tabular-nums">{formatMoney(i.amount)}</span>
+              </div>
+            ))}
+            <div className="mt-1 flex justify-between gap-3 border-t pt-2 font-semibold">
+              <span>Total do orçamento</span>
+              <span className="tabular-nums">{formatMoney(qTotal)}</span>
+            </div>
+          </div>
+        ) : (
+          <Field id="c-amount" label="Quanto custou (opcional)" error={e.amount?.message} hint="Com valor, o gasto entra em Lançamentos como Manutenção.">
+            <Affix before="R$">
+              <Input id="c-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
           </Field>
-        </div>
-        <Field id="c-amount" label="Quanto custou (opcional)" error={e.amount?.message} hint="Com valor, o gasto entra em Lançamentos como Manutenção.">
-          <Affix before="R$">
-            <Input id="c-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
-          </Affix>
-        </Field>
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          <Label>Pagamento</Label>
-          <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
-        </div>
-        {shareAvailable && cents(amount) > 0 && <ShareFields share={share} onChange={setShare} label="Dividir o custo" />}
+        )}
+        {total > 0 && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field id="c-parcels" label="Parcelas" error={e.installments?.message}>
+                <Affix after="x">
+                  <Input id="c-parcels" inputMode="numeric" className="pr-8" aria-invalid={!!e.installments} {...register('installments')} />
+                </Affix>
+              </Field>
+              <div className="flex flex-col justify-end pb-3 text-xs text-muted-foreground">{n > 1 ? `${n}x de ${formatMoney(Math.round(total / n))}` : 'À vista'}</div>
+            </div>
+            {!sharing && (
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">{n > 1 ? '1ª parcela já paga' : 'Já pago'}</span>
+                <Switch checked={paid} onCheckedChange={(x) => setValue('paid', x)} aria-label={n > 1 ? '1ª parcela já paga' : 'Já pago'} />
+              </label>
+            )}
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+              <Label>Pagamento</Label>
+              <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
+            </div>
+            {shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir o custo" note={pendingShareNote} />}
+          </>
+        )}
       </div>
-      <FormActions submitLabel={sharing ? 'Enviar convite e marcar feita' : 'Marcar como feita'} />
+      <FormActions submitLabel={sharing ? 'Concluir e enviar convite' : 'Concluir manutenção'} />
     </form>
   )
 }
@@ -1139,7 +1500,9 @@ function titleOf(d: Exclude<VehicleDialogState, null>): { title: string; descrip
     case 'reminder':
       return { title: d.reminder ? 'Editar lembrete' : 'Lembrete de manutenção', description: d.vehicle.name }
     case 'complete':
-      return { title: d.reminder.name, description: 'Registrar que a manutenção foi feita.' }
+      return { title: `Concluir: ${d.reminder.name}`, description: 'No dia em que pegou o veículo. O km registrado é a base do próximo aviso.' }
+    case 'quote':
+      return { title: `Orçamento: ${d.reminder.name}`, description: `${d.vehicle.name} · some peças e serviços.` }
     case 'document':
       return { title: DOCUMENT_PRESETS[d.preset].label, description: d.vehicle.name }
   }
@@ -1174,6 +1537,7 @@ export function VehicleDialogs({ state, onClose }: { state: VehicleDialogState; 
         {state?.kind === 'complete' && (
           <CompleteForm vehicle={state.vehicle} currentKm={state.currentKm} reminder={state.reminder} onDone={onClose} />
         )}
+        {state?.kind === 'quote' && <QuoteForm key={state.reminder.id} reminder={state.reminder} onDone={onClose} />}
         {state?.kind === 'document' && <DocumentForm vehicle={state.vehicle} preset={state.preset} onDone={onClose} />}
       </DialogContent>
     </Dialog>

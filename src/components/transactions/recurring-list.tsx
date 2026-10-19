@@ -6,10 +6,11 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { categoryIconMap } from '@/lib/icons'
 import { formatMoney } from '@/lib/money'
-import { monthlyEquivalent } from '@/lib/recurring'
+import { monthOf } from '@/lib/dates'
+import { monthlyEquivalent, occursIn, recurringHorizon } from '@/lib/recurring'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
-import type { RecurringCost, TransactionType } from '@/types/finance'
+import type { RecurringCost, Transaction, TransactionType, YearMonth } from '@/types/finance'
 
 const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
 
@@ -17,10 +18,27 @@ function scheduleLabel(rc: RecurringCost) {
   return rc.frequency === 'mensal' ? `Todo dia ${rc.dueDay}` : `Todo ano, ${rc.dueDay} de ${MONTHS[rc.dueMonth - 1]}`
 }
 
+type MonthState = { kind: 'lancado'; t: Transaction } | { kind: 'nao_vence' } | { kind: 'futuro' } | { kind: 'faltando' }
+
+/** O fixo neste mês: lançado, não vence (anual de outro mês, começa depois) ou sem lançamento. */
+function stateIn(rc: RecurringCost, month: YearMonth, transactions: Transaction[]): MonthState {
+  const t = transactions.find((x) => x.recurringCostId === rc.id && monthOf(x.dueDate) === month)
+  if (t) return { kind: 'lancado', t }
+  if (!occursIn(rc, month) || month < monthOf(rc.startDate) || (rc.endDate && month > monthOf(rc.endDate))) return { kind: 'nao_vence' }
+  if (month > recurringHorizon()) return { kind: 'futuro' }
+  return { kind: 'faltando' }
+}
+
 /** Lista recolhível dos fixos ativos de um tipo, com opção de encerrar. */
-export function RecurringList({ type }: { type: TransactionType }) {
-  const { recurringCosts, categories, endRecurringCost } = useFinanceStore(
-    useShallow((s) => ({ recurringCosts: s.recurringCosts, categories: s.categories, endRecurringCost: s.endRecurringCost })),
+export function RecurringList({ type, month }: { type: TransactionType; month: YearMonth }) {
+  const { recurringCosts, categories, endRecurringCost, transactions, restoreOccurrence } = useFinanceStore(
+    useShallow((s) => ({
+      recurringCosts: s.recurringCosts,
+      categories: s.categories,
+      endRecurringCost: s.endRecurringCost,
+      transactions: s.transactions,
+      restoreOccurrence: s.restoreOccurrence,
+    })),
   )
   const [open, setOpen] = useState(false)
   const [ending, setEnding] = useState<RecurringCost | null>(null)
@@ -31,6 +49,9 @@ export function RecurringList({ type }: { type: TransactionType }) {
   )
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
   const monthlyTotal = active.reduce((acc, r) => acc + monthlyEquivalent(r), 0)
+  const states = new Map(active.map((rc) => [rc.id, stateIn(rc, month, transactions)]))
+  const inMonth = [...states.values()].reduce((a, st) => a + (st.kind === 'lancado' ? st.t.amount : 0), 0)
+  const missing = [...states.values()].filter((st) => st.kind === 'faltando').length
 
   if (active.length === 0) return null
 
@@ -48,7 +69,11 @@ export function RecurringList({ type }: { type: TransactionType }) {
           <p className="font-medium">
             {type === 'receita' ? 'Receitas fixas' : 'Gastos fixos'} ({active.length})
           </p>
-          <p className="text-sm text-muted-foreground">{formatMoney(monthlyTotal)}/mês</p>
+          <p className="text-sm text-muted-foreground">
+            {formatMoney(inMonth)} neste mês
+            {monthlyTotal !== inMonth && ` · média ${formatMoney(monthlyTotal)}/mês`}
+            {missing > 0 && <span className="text-warning"> · {missing} sem lançamento</span>}
+          </p>
         </div>
         <ChevronDown className={cn('size-5 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
@@ -71,6 +96,20 @@ export function RecurringList({ type }: { type: TransactionType }) {
                   <p className="truncate text-xs text-muted-foreground">
                     {scheduleLabel(rc)} · {cat?.name ?? 'Sem categoria'}
                   </p>
+                  {(() => {
+                    const st = states.get(rc.id)!
+                    if (st.kind === 'lancado') return null
+                    if (st.kind === 'faltando')
+                      return (
+                        <p className="text-xs text-warning">
+                          Sem lançamento neste mês.{' '}
+                          <button type="button" onClick={() => restoreOccurrence(rc.id, month)} className="font-medium underline underline-offset-2">
+                            Lançar
+                          </button>
+                        </p>
+                      )
+                    return <p className="text-xs text-muted-foreground">{st.kind === 'futuro' ? 'Entra quando o mês chegar perto' : 'Não vence neste mês'}</p>
+                  })()}
                 </div>
                 <span className={cn('text-sm font-semibold', rc.type === 'receita' && 'text-income')}>
                   {rc.type === 'receita' ? '+' : '−'} {formatMoney(rc.amount)}

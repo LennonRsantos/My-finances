@@ -89,6 +89,18 @@ export function TransactionsPage() {
     return { despesa: calc('despesa'), receita: calc('receita') }
   }, [monthRows])
 
+  // De onde vem o total do mês: fixas (inclui parcelamento marcado como fixo), parcelas e avulsas.
+  const breakdown = useMemo(() => {
+    const list = monthRows.filter((t) => t.type === tab)
+    const sum = (f: (t: (typeof list)[number]) => boolean) => list.filter(f).reduce((a, t) => a + t.amount, 0)
+    const isFixed = (t: (typeof list)[number]) => !!t.recurringCostId || (!!t.installment && fixedSeries.includes(t.installment.installmentId))
+    return {
+      fixed: sum(isFixed),
+      installments: sum((t) => !!t.installment && !isFixed(t)),
+      single: sum((t) => !t.installment && !t.recurringCostId),
+    }
+  }, [monthRows, tab, fixedSeries])
+
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
     const matches = monthRows.filter((t) => t.type === tab && (!q || t.description.toLowerCase().includes(q)))
@@ -149,6 +161,19 @@ export function TransactionsPage() {
             </span>
           </Card>
         </div>
+        {summary.count > 0 && (
+          <p className="-mt-1 flex flex-wrap gap-x-3 gap-y-1 px-1 text-xs text-muted-foreground">
+            <span>
+              Fixas <span className="font-medium text-foreground tabular-nums">{formatMoney(breakdown.fixed)}</span>
+            </span>
+            <span>
+              Parcelas <span className="font-medium text-foreground tabular-nums">{formatMoney(breakdown.installments)}</span>
+            </span>
+            <span>
+              Avulsas <span className="font-medium text-foreground tabular-nums">{formatMoney(breakdown.single)}</span>
+            </span>
+          </p>
+        )}
 
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -179,7 +204,7 @@ export function TransactionsPage() {
 
         {filtersOpen && <TransactionFilters value={filters} onChange={setFilters} categories={categories} type={tab} />}
 
-        <RecurringList type={tab} />
+        <RecurringList type={tab} month={month} />
 
         {tab === 'despesa' && <SharedBillsCard />}
 
