@@ -60,6 +60,28 @@ function statusText(summary: MonthSummary): string {
   return `O mês deve fechar com ${end}.`
 }
 
+/**
+ * Sobra do mês: receitas menos despesas só deste mês, sem o saldo que veio de
+ * antes. Mostra quanto o mês, sozinho, deveria deixar de sobra.
+ */
+function MonthLeftover({ income, expenses }: { income: number; expenses: number }) {
+  const left = income - expenses
+  const share = income > 0 ? Math.round((left / income) * 100) : null
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t px-4 py-3.5 sm:px-5">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium">{left < 0 ? 'Falta no mês' : 'Sobra do mês'}</span>
+        <span className="text-xs text-muted-foreground">
+          Receitas − despesas deste mês{share !== null && left > 0 ? ` · ${share}% da renda` : ''}
+        </span>
+      </div>
+      <span className={cn('whitespace-nowrap text-lg font-semibold tabular-nums', left < 0 ? 'text-expense' : left > 0 ? 'text-income' : 'text-muted-foreground')}>
+        {formatMoney(left)}
+      </span>
+    </div>
+  )
+}
+
 /** Resumo do mês: saldo de hoje e previsão do fim do mês lado a lado, movimento embaixo. */
 export function MonthStatement({ summary, toPay }: { summary: MonthSummary; toPay: number }) {
   const { tone } = healthMeta[summary.health]
@@ -87,6 +109,7 @@ export function MonthStatement({ summary, toPay }: { summary: MonthSummary; toPa
         <Figure label="Despesas" value={summary.monthExpenses} tone="expense" sign="−" />
         <Figure label="Falta pagar" value={toPay} tone={toPay > 0 ? 'warning' : undefined} />
       </dl>
+      <MonthLeftover income={summary.monthIncome} expenses={summary.monthExpenses} />
     </section>
   )
 }

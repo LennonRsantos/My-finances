@@ -5,7 +5,7 @@
 import type { Cents, ISODate, MaintenanceReminder, SharedBill, Transaction, Transfer, Vehicle } from '@/types/finance'
 import { addDaysISO, formatDateShort } from './dates'
 import { computeDueAlerts } from './finance'
-import { displayName, partnerOf, pendingInvites, unseenRejections } from './shared'
+import { billTerms, displayName, partnerOf, pendingInvites, unseenRejections } from './shared'
 import { currentOdometer, reminderStatus } from './vehicle'
 
 export type NotificationKind = 'invite' | 'rejection' | 'handle' | 'rules' | 'overdue' | 'today' | 'soon' | 'maintenance' | 'owed' | 'sent'
@@ -53,7 +53,7 @@ export function buildNotifications(input: {
         kind: 'invite',
         priority: 100,
         title: `${displayName(creator)} está te convidando para divisão de uma conta: ${b.title}`,
-        detail: `Sua parte: ${b.participants[1].splitPercentage}% de ${formatMoney(b.totalAmount)} em ${b.installments}x`,
+        detail: `Sua parte: ${b.participants[1].splitPercentage}% de ${billTerms(b, formatMoney)}`,
         tone: 'info',
         bill: b,
       })

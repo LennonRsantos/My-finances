@@ -9,6 +9,7 @@ import { addDaysISO, monthOf, shiftMonth, todayISO } from '@/lib/dates'
 import { pendingOccurrences } from '@/lib/recurring'
 import { currentUid, reportSyncError } from './auth-store'
 import { localOnlyStorage } from './local-storage'
+import { useSettingsStore } from './settings-store'
 
 export type EditScope = 'one' | 'future'
 
@@ -35,8 +36,24 @@ const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod',
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
   t.installment ? t.description.replace(/\s*\(\d+\/\d+\)$/, '') : t.description
 
+/** Parcelamento marcado como conta fixa: aparece sem o "(n/N)". */
+const isFixedSeries = (t: Pick<Transaction, 'installment'>) =>
+  !!t.installment && (useSettingsStore.getState().settings.fixedSeries ?? []).includes(t.installment.installmentId)
+
 const withSuffix = (base: string, t: Pick<Transaction, 'installment'>) =>
-  t.installment ? `${base} (${t.installment.number}/${t.installment.total})` : base
+  t.installment && !isFixedSeries(t) ? `${base} (${t.installment.number}/${t.installment.total})` : base
+
+/** Descrições de uma série com ou sem "(n/N)"; conta dividida tem a própria numeração e fica de fora. */
+function seriesLabelWrites(transactions: Transaction[], ids: ReadonlySet<string>, fixed: boolean): cloud.DocWrite[] {
+  return transactions
+    .filter((t) => t.installment && ids.has(t.installment.installmentId) && !t.sharedBillId)
+    .map((t) => {
+      const base = baseDescription(t)
+      return { t, description: fixed ? base : `${base} (${t.installment!.number}/${t.installment!.total})` }
+    })
+    .filter(({ t, description }) => t.description !== description)
+    .map(({ t, description }) => ({ name: 'transactions' as const, data: { ...t, description } }))
+}
 
 const pick = <T extends object, K extends keyof T>(obj: T, keys: readonly K[]) =>
   Object.fromEntries(keys.map((k) => [k, obj[k]])) as Pick<T, K>
@@ -73,6 +90,10 @@ interface FinanceState extends FinanceData {
   updateRecurringCost: (rc: RecurringCost) => void
   /** Grava um lançamento inteiro (edição de abastecimento e gasto do veículo). */
   saveTransaction: (t: Transaction) => void
+  /** Marca/desmarca parcelamento como conta fixa (fora do saldo devedor, sem "(n/N)" na descrição). */
+  toggleFixedSeries: (installmentId: string) => void
+  /** Tira o "(n/N)" das séries já marcadas como conta fixa (ex.: marcadas antes desta regra). */
+  syncFixedSeriesLabels: () => void
   /** Parcelas geradas/suspensas/apagadas por contas compartilhadas. */
   applySharedChanges: (upserts: Transaction[], deletes: Transaction['id'][]) => void
   togglePaid: (id: Transaction['id']) => void
@@ -254,6 +275,21 @@ export const useFinanceStore = create<FinanceState>()(
         },
 
         saveTransaction: (t) => commit({ upserts: txWrites([t]) }),
+
+        toggleFixedSeries: (id) => {
+          const settings = useSettingsStore.getState()
+          const fixed = !(settings.settings.fixedSeries ?? []).includes(id)
+          settings.toggleFixedSeries(id)
+          const upserts = seriesLabelWrites(get().transactions, new Set([id]), fixed)
+          if (upserts.length) commit({ upserts })
+        },
+
+        syncFixedSeriesLabels: () => {
+          const ids = new Set(useSettingsStore.getState().settings.fixedSeries ?? [])
+          if (!ids.size) return
+          const upserts = seriesLabelWrites(get().transactions, ids, true)
+          if (upserts.length) commit({ upserts })
+        },
 
         applySharedChanges: (upserts, deletes) =>
           commit({ upserts: txWrites(upserts), deletes: deletes.map((id) => ({ name: 'transactions' as const, id })) }),

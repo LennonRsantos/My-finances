@@ -7,6 +7,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
 import { useSharedRole } from '@/components/shared/share-fields'
 import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-field'
+import { SharedBillDialog } from '@/components/shared/shared-ui'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
@@ -52,13 +53,14 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   // Parcelamento que na verdade é conta fixa (ex.: aluguel dividido em 12x).
   const seriesId = t.installment?.installmentId
   const isFixed = useSettingsStore((s) => !!seriesId && (s.settings.fixedSeries ?? []).includes(seriesId))
-  const toggleFixedSeries = useSettingsStore((s) => s.toggleFixedSeries)
+  const toggleFixedSeries = useFinanceStore((s) => s.toggleFixedSeries)
   const [scope, setScope] = useState<EditScope>('one')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const isIncome = t.type === 'receita'
   const signedIn = useAuthStore((s) => s.status === 'signed_in')
   const canShare = canShareExisting(t, signedIn)
   const shared = useSharedRole(t)
+  const [editingBill, setEditingBill] = useState(false)
 
   const {
     register,
@@ -117,161 +119,132 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const seriesLabel = t.installment ? 'Esta e próximas parcelas' : 'Este e próximos meses'
 
   return (
-    <form noValidate onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-5 overflow-y-auto px-5 pb-4">
-        {inSeries && (
-          <div className="flex flex-col gap-2 rounded-xl border p-3">
-            <p className="flex items-center gap-2 text-sm font-medium">
-              {t.installment && !isFixed ? (
-                <Layers className="size-4 text-muted-foreground" />
-              ) : (
-                <Repeat className="size-4 text-muted-foreground" />
-              )}
-              {t.installment ? `Parcela ${t.installment.number} de ${t.installment.total}` : 'Lançamento fixo'}
-            </p>
-            <div role="radiogroup" aria-label="Aplicar alterações em" className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
-              {(
-                [
-                  ['one', 'Só este'],
-                  ['future', seriesLabel],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="radio"
-                  aria-checked={scope === key}
-                  onClick={() => setScope(key)}
-                  className={cn(
-                    'min-h-9 rounded-lg px-2 text-sm font-medium transition-colors',
-                    scope === key ? 'bg-card shadow-sm' : 'text-muted-foreground',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {scope === 'future' && (
-              <p className="text-xs text-muted-foreground">
-                Descrição, valor, categoria, pagamento e pessoa valem para os próximos ainda pendentes. Data e status mudam só
-                neste.
+    <>
+      <form noValidate onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-col gap-5 overflow-y-auto px-5 pb-4">
+          {inSeries && (
+            <div className="flex flex-col gap-2 rounded-xl border p-3">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                {t.installment && !isFixed ? (
+                  <Layers className="size-4 text-muted-foreground" />
+                ) : (
+                  <Repeat className="size-4 text-muted-foreground" />
+                )}
+                {t.installment ? `Parcela ${t.installment.number} de ${t.installment.total}` : 'Lançamento fixo'}
               </p>
-            )}
-            {seriesId && (
-              <label className="mt-1 flex items-center justify-between gap-3 border-t pt-3">
-                <span className="flex flex-col">
-                  <span className="text-sm font-medium">Conta fixa (não é dívida)</span>
-                  <span className="text-xs text-muted-foreground">
-                    Para aluguel, condomínio e contas que se repetem. Não entra no saldo devedor. Vale para todas as parcelas.
+              <div role="radiogroup" aria-label="Aplicar alterações em" className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+                {(
+                  [
+                    ['one', 'Só este'],
+                    ['future', seriesLabel],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={scope === key}
+                    onClick={() => setScope(key)}
+                    className={cn(
+                      'min-h-9 rounded-lg px-2 text-sm font-medium transition-colors',
+                      scope === key ? 'bg-card shadow-sm' : 'text-muted-foreground',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {scope === 'future' && (
+                <p className="text-xs text-muted-foreground">
+                  Descrição, valor, categoria, pagamento e pessoa valem para os próximos ainda pendentes. Data e status mudam só
+                  neste.
+                </p>
+              )}
+              {seriesId && (
+                <label className="mt-1 flex items-center justify-between gap-3 border-t pt-3">
+                  <span className="flex flex-col">
+                    <span className="text-sm font-medium">Conta fixa (não é dívida)</span>
+                    <span className="text-xs text-muted-foreground">
+                      Para aluguel, condomínio e contas que se repetem. Não entra no saldo devedor. Vale para todas as parcelas.
+                    </span>
                   </span>
-                </span>
-                <Switch checked={isFixed} onCheckedChange={() => toggleFixedSeries(seriesId)} aria-label="Conta fixa (não é dívida)" />
-              </label>
-            )}
-          </div>
-        )}
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="edit-amount">Valor</Label>
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
-            <Input
-              id="edit-amount"
-              inputMode="decimal"
-              autoComplete="off"
-              className="h-14 pl-10 text-2xl font-semibold sm:text-2xl"
-              aria-invalid={!!errors.amount}
-              {...register('amount', { setValueAs: parseMoneyInput })}
-            />
-          </div>
-          <FieldError message={errors.amount?.message} />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="edit-description">Descrição</Label>
-          <Input id="edit-description" aria-invalid={!!errors.description} {...register('description')} />
-          {t.installment && <p className="text-xs text-muted-foreground">O número da parcela é mantido automaticamente.</p>}
-          <FieldError message={errors.description?.message} />
-        </div>
-
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div className="flex flex-col gap-2">
-            <Label>Categoria</Label>
-            <Controller
-              control={control}
-              name="categoryId"
-              render={({ field }) => (
-                <Select
-                  value={field.value}
-                  onValueChange={(v) => {
-                    field.onChange(v)
-                    setValue('subcategoryId', null)
-                  }}
-                >
-                  <SelectTrigger aria-label="Categoria" aria-invalid={!!errors.categoryId}>
-                    <SelectValue placeholder="Escolha" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {typeCategories.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Switch checked={isFixed} onCheckedChange={() => toggleFixedSeries(seriesId)} aria-label="Conta fixa (não é dívida)" />
+                </label>
               )}
-            />
-            <FieldError message={errors.categoryId?.message} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Subcategoria</Label>
-            <Controller
-              control={control}
-              name="subcategoryId"
-              render={({ field }) => (
-                <Select
-                  value={field.value ?? 'none'}
-                  onValueChange={(v) => field.onChange(v === 'none' ? null : v)}
-                  disabled={subs.length === 0}
-                >
-                  <SelectTrigger aria-label="Subcategoria">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Nenhuma</SelectItem>
-                    {subs.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-        </div>
+            </div>
+          )}
 
-        <div className={cn('grid gap-5', !isIncome && 'sm:grid-cols-2')}>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="edit-date">{isIncome ? 'Data de recebimento' : 'Data de vencimento'}</Label>
-            <Input id="edit-date" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
-            <FieldError message={errors.dueDate?.message} />
+            <Label htmlFor="edit-amount">Valor</Label>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
+              <Input
+                id="edit-amount"
+                inputMode="decimal"
+                autoComplete="off"
+                className="h-14 pl-10 text-2xl font-semibold sm:text-2xl"
+                aria-invalid={!!errors.amount}
+                {...register('amount', { setValueAs: parseMoneyInput })}
+              />
+            </div>
+            <FieldError message={errors.amount?.message} />
           </div>
-          {!isIncome && (
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-description">Descrição</Label>
+            <Input id="edit-description" aria-invalid={!!errors.description} {...register('description')} />
+            {t.installment && <p className="text-xs text-muted-foreground">O número da parcela é mantido automaticamente.</p>}
+            <FieldError message={errors.description?.message} />
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
-              <Label>Forma de pagamento</Label>
+              <Label>Categoria</Label>
               <Controller
                 control={control}
-                name="paymentMethod"
+                name="categoryId"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger aria-label="Forma de pagamento">
+                  <Select
+                    value={field.value}
+                    onValueChange={(v) => {
+                      field.onChange(v)
+                      setValue('subcategoryId', null)
+                    }}
+                  >
+                    <SelectTrigger aria-label="Categoria" aria-invalid={!!errors.categoryId}>
+                      <SelectValue placeholder="Escolha" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {typeCategories.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <FieldError message={errors.categoryId?.message} />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Subcategoria</Label>
+              <Controller
+                control={control}
+                name="subcategoryId"
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? 'none'}
+                    onValueChange={(v) => field.onChange(v === 'none' ? null : v)}
+                    disabled={subs.length === 0}
+                  >
+                    <SelectTrigger aria-label="Subcategoria">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {PAYMENT_METHODS.map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {PAYMENT_METHOD_LABELS[m]}
+                      <SelectItem value="none">Nenhuma</SelectItem>
+                      {subs.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -279,93 +252,133 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                 )}
               />
             </div>
+          </div>
+
+          <div className={cn('grid gap-5', !isIncome && 'sm:grid-cols-2')}>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="edit-date">{isIncome ? 'Data de recebimento' : 'Data de vencimento'}</Label>
+              <Input id="edit-date" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
+              <FieldError message={errors.dueDate?.message} />
+            </div>
+            {!isIncome && (
+              <div className="flex flex-col gap-2">
+                <Label>Forma de pagamento</Label>
+                <Controller
+                  control={control}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger aria-label="Forma de pagamento">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_METHODS.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {PAYMENT_METHOD_LABELS[m]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </div>
+            )}
+          </div>
+
+          {!isIncome && (
+            <PayToField
+              id="edit-payTo"
+              value={payToRaw}
+              onChange={(name) => setValue('payTo', name, { shouldValidate: !!errors.payTo })}
+              link={payLink}
+              onLinkChange={setPayLink}
+              suggestions={payeeSuggestions}
+              error={errors.payTo?.message}
+            />
           )}
-        </div>
 
-        {!isIncome && (
-          <PayToField
-            id="edit-payTo"
-            value={payToRaw}
-            onChange={(name) => setValue('payTo', name, { shouldValidate: !!errors.payTo })}
-            link={payLink}
-            onLinkChange={setPayLink}
-            suggestions={payeeSuggestions}
-            error={errors.payTo?.message}
+          <Controller
+            control={control}
+            name="paid"
+            render={({ field }) => (
+              <div className="flex items-center justify-between gap-4 rounded-xl border p-3">
+                <Label htmlFor="edit-paid">{isIncome ? 'Recebido' : payTo ? `Enviado para ${payTo}` : 'Pago'}</Label>
+                <Switch id="edit-paid" checked={field.value} onCheckedChange={field.onChange} />
+              </div>
+            )}
           />
-        )}
 
-        <Controller
-          control={control}
-          name="paid"
-          render={({ field }) => (
-            <div className="flex items-center justify-between gap-4 rounded-xl border p-3">
-              <Label htmlFor="edit-paid">{isIncome ? 'Recebido' : payTo ? `Enviado para ${payTo}` : 'Pago'}</Label>
-              <Switch id="edit-paid" checked={field.value} onCheckedChange={field.onChange} />
+          {canShare && <ShareExisting transaction={t} />}
+          {shared && (
+            <div className="flex flex-col gap-2 rounded-xl border p-3 text-sm text-muted-foreground">
+              <p>
+                {shared.role === 'creator'
+                  ? `Conta dividida com @${shared.partner}. Excluir cancela a conta: as parcelas não pagas somem para os dois.`
+                  : `Conta de @${shared.partner}. Só quem criou pode cancelar; se cancelar, some daqui também.`}
+              </p>
+              {shared.role === 'creator' && (
+                <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setEditingBill(true)}>
+                  {shared.bill.recurring ? 'Editar conta dividida' : 'Editar conta dividida (valor, parcelas ou fixa)'}
+                </Button>
+              )}
             </div>
           )}
-        />
 
-        {canShare && <ShareExisting transaction={t} />}
-        {shared && (
-          <p className="rounded-xl border p-3 text-sm text-muted-foreground">
-            {shared.role === 'creator'
-              ? `Conta dividida com @${shared.partner}. Excluir cancela a conta: as parcelas não pagas somem para os dois.`
-              : `Conta de @${shared.partner}. Só quem criou pode cancelar; se cancelar, some daqui também.`}
-          </p>
-        )}
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="edit-notes">Observações (opcional)</Label>
-          <Input id="edit-notes" aria-invalid={!!errors.notes} {...register('notes')} />
-          <FieldError message={errors.notes?.message} />
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-notes">Observações (opcional)</Label>
+            <Input id="edit-notes" aria-invalid={!!errors.notes} {...register('notes')} />
+            <FieldError message={errors.notes?.message} />
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-2 border-t bg-card px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        {confirmDelete ? (
-          <>
-            <Button type="button" variant="outline" className="flex-1" onClick={() => setConfirmDelete(false)}>
-              Voltar
-            </Button>
-            <Button
-              type="button"
-              variant="expense"
-              className="flex-[2]"
-              onClick={() => {
-                // Conta dividida: cancela a conta (parcelas não pagas somem para os dois).
-                if (shared?.role === 'creator') cancelSharedBill(shared.bill).catch(reportSyncError)
-                else deleteTransactionScoped(t.id, scope)
-                onDone()
-              }}
-            >
-              {shared?.role === 'creator'
-                ? 'Cancelar para os dois'
-                : scope === 'future'
-                  ? `Excluir: ${seriesLabel.toLowerCase()}`
-                  : 'Confirmar exclusão'}
-            </Button>
-          </>
-        ) : (
-          <>
-            {shared?.role !== 'invitee' && (
+        <div className="flex gap-2 border-t bg-card px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {confirmDelete ? (
+            <>
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setConfirmDelete(false)}>
+                Voltar
+              </Button>
               <Button
                 type="button"
-                variant="outline"
-                size="icon"
-                className="text-expense"
-                aria-label={shared ? 'Cancelar conta dividida' : 'Excluir'}
-                onClick={() => setConfirmDelete(true)}
+                variant="expense"
+                className="flex-[2]"
+                onClick={() => {
+                  // Conta dividida: cancela a conta (parcelas não pagas somem para os dois).
+                  if (shared?.role === 'creator') cancelSharedBill(shared.bill).catch(reportSyncError)
+                  else deleteTransactionScoped(t.id, scope)
+                  onDone()
+                }}
               >
-                <Trash2 />
+                {shared?.role === 'creator'
+                  ? 'Cancelar para os dois'
+                  : scope === 'future'
+                    ? `Excluir: ${seriesLabel.toLowerCase()}`
+                    : 'Confirmar exclusão'}
               </Button>
-            )}
-            <Button type="submit" className="flex-1">
-              Salvar alterações
-            </Button>
-          </>
-        )}
-      </div>
-    </form>
+            </>
+          ) : (
+            <>
+              {shared?.role !== 'invitee' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="text-expense"
+                  aria-label={shared ? 'Cancelar conta dividida' : 'Excluir'}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 />
+                </Button>
+              )}
+              <Button type="submit" className="flex-1">
+                Salvar alterações
+              </Button>
+            </>
+          )}
+        </div>
+      </form>
+      {/* Fora do <form>: o submit do diálogo da conta não pode subir para este formulário. */}
+      <SharedBillDialog bill={editingBill && shared ? shared.bill : null} onClose={() => setEditingBill(false)} />
+    </>
   )
 }
 

@@ -940,6 +940,7 @@ function DocumentForm({ vehicle, preset, onDone }: { vehicle: Vehicle; preset: D
             subcategoryId: meta.subcategoryId,
             vehicleId: vehicle.id,
             replaces: monthlyShare ? { transactionIds: ids, recurringCostId: rc.id } : { transactionIds: ids.slice(0, 1) },
+            recurring: monthlyShare,
           })
           if ('error' in result) return setShare({ ...share, error: result.error })
         }
@@ -1060,6 +1061,8 @@ function FinancingForm({ vehicle, onDone }: { vehicle: Vehicle; onDone: () => vo
             title,
             totalAmount: cents(v.amount) * rest,
             installments: rest,
+            installmentOffset: n - 1,
+            installmentTotal: N,
             firstDueDate: v.date as ISODate,
             categoryId: VEHICLE_CATEGORY_ID,
             subcategoryId: VEHICLE_FINANCING_SUBCATEGORY_ID,

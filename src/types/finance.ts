@@ -343,6 +343,18 @@ export interface SharedBill {
   title: string
   totalAmount: Cents
   installments: number
+  /**
+   * Parcelas da série original antes da 1ª dividida (ex.: dividiu da 11ª de 36: 10).
+   * Só numeração: as parcelas aparecem como 11/36 ... 36/36. Ausente = 0.
+   */
+  installmentOffset?: number | null
+  /** Total de parcelas da série original (ex.: 36). Ausente = offset + `installments`. */
+  installmentTotal?: number | null
+  /**
+   * Conta fixa (internet, aluguel...): `totalAmount` é o valor por mês e
+   * `installments` = 1. Repete todo mês, sem fim, até ser cancelada.
+   */
+  recurring?: boolean | null
   /** Vencimento da 1ª parcela */
   firstDueDate: ISODate
   categoryId: Category['id']

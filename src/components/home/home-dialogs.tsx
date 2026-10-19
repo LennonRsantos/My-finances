@@ -65,11 +65,25 @@ function homeExpense(fields: Pick<Transaction, 'description' | 'amount' | 'subca
  */
 function useHomeShare() {
   const { share, setShare, available } = useShare()
-  const send = async (bill: { title: string; total: Cents; installments: number; due: ISODate; subcategoryId: string }) => {
+  const send = async (bill: {
+    title: string
+    total: Cents
+    installments: number
+    due: ISODate
+    subcategoryId: string
+    /** Numeração na série original (ex.: dividir da 11ª de 36) */
+    offset?: number
+    seriesTotal?: number
+    /** Conta fixa: repete todo mês, sem fim */
+    recurring?: boolean
+  }) => {
     const result = await sendShareInvite(share, {
       title: bill.title,
       totalAmount: bill.total,
       installments: bill.installments,
+      installmentOffset: bill.offset ?? null,
+      installmentTotal: bill.seriesTotal ?? null,
+      recurring: bill.recurring ?? false,
       firstDueDate: bill.due,
       categoryId: HOME_CATEGORY_ID,
       subcategoryId: bill.subcategoryId,
@@ -138,6 +152,7 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
             title: v.description,
             total: cents(v.amount) * (v.repeat ? SHARED_FIXED_MONTHS : 1),
             installments: v.repeat ? SHARED_FIXED_MONTHS : 1,
+            recurring: v.repeat,
             due,
             subcategoryId: v.subcategoryId,
           })
@@ -459,6 +474,7 @@ function RentForm({ onDone }: { onDone: () => void }) {
             title: 'Aluguel',
             total: cents(v.amount) * SHARED_FIXED_MONTHS,
             installments: SHARED_FIXED_MONTHS,
+            recurring: true,
             due: v.date as ISODate,
             subcategoryId: RENT_SUBCATEGORY_ID,
           })
@@ -539,6 +555,8 @@ function FinancingForm({ onDone }: { onDone: () => void }) {
             title: 'Financiamento do imóvel',
             total: parcela * (Number(v.total) - Number(v.current) + 1),
             installments: Number(v.total) - Number(v.current) + 1,
+            offset: Number(v.current) - 1,
+            seriesTotal: Number(v.total),
             due: v.date as ISODate,
             subcategoryId: FINANCING_SUBCATEGORY_ID,
           })
@@ -749,6 +767,7 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
             title: v.description,
             total: cents(v.amount) * (v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1),
             installments: v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1,
+            recurring: v.repeat === 'mensal',
             due: v.date as ISODate,
             subcategoryId: v.subcategoryId,
           })

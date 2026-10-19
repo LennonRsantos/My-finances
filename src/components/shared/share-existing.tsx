@@ -31,6 +31,8 @@ export function ShareExisting({ transaction: t }: { transaction: Transaction }) 
       return {
         total: rest.reduce((sum, x) => sum + x.amount, 0),
         installments: rest.length,
+        installmentOffset: (rest[0]?.installment?.number ?? from) - 1,
+        installmentTotal: t.installment.total,
         firstDueDate: rest[0]?.dueDate ?? t.dueDate,
         replaces: { transactionIds: rest.map((x) => x.id) } as SharedBillReplaces,
         note: rest.length > 1 ? `O convite cobre as ${rest.length} parcelas que faltam.` : undefined,
@@ -45,6 +47,7 @@ export function ShareExisting({ transaction: t }: { transaction: Transaction }) 
         installments: SHARED_FIXED_MONTHS,
         firstDueDate: t.dueDate,
         replaces: { transactionIds: ids, recurringCostId: rc.id },
+        recurring: true,
         note: fixedShareNote,
       }
     }
@@ -75,6 +78,9 @@ export function ShareExisting({ transaction: t }: { transaction: Transaction }) 
       title: baseDescription(t),
       totalAmount: plan.total,
       installments: plan.installments,
+      installmentOffset: 'installmentOffset' in plan ? plan.installmentOffset : null,
+      installmentTotal: 'installmentTotal' in plan ? plan.installmentTotal : null,
+      recurring: 'recurring' in plan ? plan.recurring : false,
       firstDueDate: plan.firstDueDate,
       categoryId: t.categoryId,
       subcategoryId: t.subcategoryId,

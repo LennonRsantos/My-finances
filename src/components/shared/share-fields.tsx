@@ -20,7 +20,7 @@ export interface ShareState {
 
 /** Conta fixa mensal dividida vira convite destes meses; depois, divide de novo. */
 export const SHARED_FIXED_MONTHS = 12
-export const fixedShareNote = `Conta fixa: o convite cobre os próximos ${SHARED_FIXED_MONTHS} meses; depois, divida de novo.`
+export const fixedShareNote = 'Conta fixa: repete todo mês, sem data para acabar. Cancele quando quiser parar.'
 export const yearlyShareNote = 'Conta anual: o convite vale só para esta vez.'
 
 export const emptyShare: ShareState = { on: false, handle: '', percent: '50', payerType: 'SPLIT_PAYMENT', error: '' }
@@ -47,6 +47,8 @@ export async function sendShareInvite(share: ShareState, bill: Bill): Promise<{ 
   if (!handle) return { error: 'Informe o @ da pessoa' }
   if (!(percent >= 1 && percent <= 99)) return { error: 'A parte da pessoa vai de 1% a 99%' }
   if (handle === myHandle) return { error: 'Esse é o seu @' }
+  // Conta fixa: o convite leva o valor por mês (quem chama pode mandar o total de N meses).
+  if (bill.recurring) bill = { ...bill, totalAmount: Math.round(bill.totalAmount / bill.installments), installments: 1 }
   // Mesmo limite das regras do Firestore.
   if (bill.installments > 120) return { error: 'Conta dividida vai até 120 parcelas (10 anos).' }
   try {

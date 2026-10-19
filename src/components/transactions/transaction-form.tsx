@@ -185,6 +185,10 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       title: v.description,
       totalAmount: perInstallment ? value * count : value,
       installments: count,
+      recurring: v.isRecurring && v.frequency === 'mensal',
+      ...(v.isInstallment && !v.isRecurring && v.installmentMode === 'andamento'
+        ? { installmentOffset: v.currentInstallment - 1, installmentTotal: v.installments }
+        : {}),
       firstDueDate: v.dueDate as ISODate,
       categoryId: v.categoryId,
       subcategoryId: v.subcategoryId,

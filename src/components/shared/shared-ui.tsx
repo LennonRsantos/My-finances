@@ -12,7 +12,7 @@ import { Badge, Switch, type Tone } from '@/components/ui/misc'
 import { useKnownPartners } from '@/components/shared/share-fields'
 import { cents, date, money } from '@/lib/form-fields'
 import { formatMoney, fromCents } from '@/lib/money'
-import { displayName, handleError, myTotal, normalizeHandle, partnerOf, suggestHandle } from '@/lib/shared'
+import { billTerms, displayName, handleError, myTotal, normalizeHandle, partnerOf, suggestHandle } from '@/lib/shared'
 import { cancelSharedBill, claimHandle, lookupHandle, updateSharedBill } from '@/lib/shared-cloud'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { NO_AUTO_ACCEPT, useSettingsStore } from '@/store/settings-store'
@@ -241,12 +241,13 @@ const editSchema = z.object({
   date,
   percent: z.string().trim().refine((v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 99, 'De 1 a 99'),
   payerType: z.enum(['SPLIT_PAYMENT', 'SINGLE_PAYER']),
+  kind: z.enum(['parcelada', 'fixa']),
 })
 
 function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
-  const { register, handleSubmit, control, setValue, formState } = useForm({
+  const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(editSchema),
     defaultValues: {
       title: bill.title,
@@ -255,9 +256,20 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
       date: bill.firstDueDate,
       percent: String(bill.participants[1].splitPercentage),
       payerType: bill.payerType as SharedPayerType,
+      kind: (bill.recurring ? 'fixa' : 'parcelada') as 'parcelada' | 'fixa',
     },
   })
-  const payerType = useWatch({ control, name: 'payerType' })
+  const [payerType, kind] = useWatch({ control, name: ['payerType', 'kind'] })
+  const fixed = kind === 'fixa'
+  // Trocar o tipo converte o valor: fixa usa o valor por mês; parcelada, o total.
+  const changeKind = (next: 'parcelada' | 'fixa') => {
+    if (next === kind) return
+    const value = cents(getValues('amount'))
+    const n = Math.max(1, Number(getValues('installments')) || 1)
+    const converted = next === 'fixa' ? Math.round(value / n) : value * n
+    if (value > 0) setValue('amount', fromCents(converted).toFixed(2).replace('.', ','))
+    setValue('kind', next)
+  }
   const e = formState.errors
   const accepted = bill.status === 'ACCEPTED'
 
@@ -271,7 +283,8 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
           await updateSharedBill(bill, {
             title: v.title,
             totalAmount: cents(v.amount),
-            installments: Number(v.installments),
+            installments: v.kind === 'fixa' ? 1 : Number(v.installments),
+            recurring: v.kind === 'fixa',
             firstDueDate: v.date as ISODate,
             payerType: v.payerType,
             inviteePercent: Number(v.percent),
@@ -288,18 +301,33 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
         <Field id="sb-title" label="Conta" error={e.title?.message}>
           <Input id="sb-title" aria-invalid={!!e.title} {...register('title')} />
         </Field>
+        <div className="flex flex-col gap-2">
+          <Label>Tipo</Label>
+          <Choices
+            label="Tipo"
+            value={kind}
+            onChange={changeKind}
+            options={[
+              { value: 'parcelada', label: 'Parcelada' },
+              { value: 'fixa', label: 'Fixa todo mês' },
+            ]}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field id="sb-amount" label="Valor total" error={e.amount?.message}>
+          <Field id="sb-amount" label={fixed ? 'Valor por mês' : 'Valor total'} error={e.amount?.message}>
             <Affix before="R$">
               <Input id="sb-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
             </Affix>
           </Field>
-          <Field id="sb-inst" label="Parcelas" error={e.installments?.message}>
-            <Input id="sb-inst" inputMode="numeric" aria-invalid={!!e.installments} {...register('installments')} />
-          </Field>
+          {!fixed && (
+            <Field id="sb-inst" label="Parcelas" error={e.installments?.message}>
+              <Input id="sb-inst" inputMode="numeric" aria-invalid={!!e.installments} {...register('installments')} />
+            </Field>
+          )}
         </div>
+        {fixed && <p className="-mt-3 text-xs text-muted-foreground">Repete todo mês, sem data para acabar. Para parar, cancele a conta.</p>}
         <div className="grid grid-cols-2 gap-3">
-          <Field id="sb-date" label="1ª parcela" error={e.date?.message}>
+          <Field id="sb-date" label={fixed ? '1º mês' : '1ª parcela'} error={e.date?.message}>
             <Input id="sb-date" type="date" aria-invalid={!!e.date} {...register('date')} />
           </Field>
           <Field id="sb-pct" label="Parte do parceiro" error={e.percent?.message}>
@@ -322,7 +350,7 @@ function EditForm({ bill, onDone }: { bill: SharedBill; onDone: () => void }) {
         </div>
         {accepted && (
           <p className="rounded-xl bg-warning-soft px-3 py-2 text-xs text-warning">
-            Mudar valor, parcelas, data, divisão ou quem paga manda a conta de volta para aprovação. As parcelas atuais ficam em espera até o
+            Mudar tipo, valor, parcelas, data, divisão ou quem paga manda a conta de volta para aprovação. As parcelas atuais ficam em espera até o
             parceiro aceitar de novo.
           </p>
         )}
@@ -401,8 +429,9 @@ export function SharedBillsCard({
                       <Badge tone={statusTone[b.status]}>{statusLabel[b.status]}</Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {mine ? 'Compartilhada com' : 'Compartilhada por'} {partner ? `@${partner.handle}` : '—'} · {formatMoney(b.totalAmount)} em{' '}
-                      {b.installments}x · sua parte {formatMoney(myTotal(b, uid))}
+                      {mine ? 'Compartilhada com' : 'Compartilhada por'} {partner ? `@${partner.handle}` : '—'} · {billTerms(b, formatMoney)} · sua
+                      parte {formatMoney(myTotal(b, uid))}
+                      {b.recurring ? '/mês' : ''}
                     </p>
                   </div>
                   {mine && (
@@ -416,15 +445,24 @@ export function SharedBillsCard({
           </ul>
         </CardContent>
       )}
-      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar conta compartilhada</DialogTitle>
-            <DialogDescription>{editing && partnerOf(editing, uid) ? `Com ${displayName(partnerOf(editing, uid)!)}` : ''}</DialogDescription>
-          </DialogHeader>
-          {editing && <EditForm key={editing.id} bill={editing} onDone={() => setEditing(null)} />}
-        </DialogContent>
-      </Dialog>
+      <SharedBillDialog bill={editing} onClose={() => setEditing(null)} />
     </Card>
+  )
+}
+
+/** Editar conta compartilhada (só quem criou). */
+export function SharedBillDialog({ bill, onClose }: { bill: SharedBill | null; onClose: () => void }) {
+  const uid = useAuthStore((s) => (s.status === 'signed_in' ? s.user?.uid : null))
+  const partner = bill && uid ? partnerOf(bill, uid) : null
+  return (
+    <Dialog open={!!bill} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Editar conta compartilhada</DialogTitle>
+          <DialogDescription>{partner ? `Com ${displayName(partner)}` : ''}</DialogDescription>
+        </DialogHeader>
+        {bill && <EditForm key={bill.id} bill={bill} onDone={onClose} />}
+      </DialogContent>
+    </Dialog>
   )
 }

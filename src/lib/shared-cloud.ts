@@ -139,6 +139,11 @@ export interface NewSharedBill {
   title: string
   totalAmount: Cents
   installments: number
+  /** Numeração na série original (ver `SharedBill.installmentOffset`) */
+  installmentOffset?: number | null
+  installmentTotal?: number | null
+  /** Conta fixa: valor por mês, sem fim (ver `SharedBill.recurring`) */
+  recurring?: boolean | null
   firstDueDate: ISODate
   categoryId: Category['id']
   subcategoryId?: string | null
@@ -164,6 +169,9 @@ export async function createSharedBill(input: NewSharedBill): Promise<SharedBill
     title: input.title,
     totalAmount: input.totalAmount,
     installments: input.installments,
+    installmentOffset: input.installmentOffset ?? null,
+    installmentTotal: input.installmentTotal ?? null,
+    recurring: input.recurring ?? false,
     firstDueDate: input.firstDueDate,
     categoryId: input.categoryId,
     subcategoryId: input.subcategoryId ?? null,
@@ -217,6 +225,8 @@ export interface SharedBillEdit {
   firstDueDate: ISODate
   payerType: SharedPayerType
   inviteePercent: number
+  /** Conta fixa: `totalAmount` por mês e `installments` = 1 */
+  recurring: boolean
 }
 
 /**
@@ -231,6 +241,7 @@ export async function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
   const material =
     edit.totalAmount !== bill.totalAmount ||
     edit.installments !== bill.installments ||
+    edit.recurring !== !!bill.recurring ||
     edit.firstDueDate !== bill.firstDueDate ||
     edit.payerType !== bill.payerType ||
     edit.inviteePercent !== invitee.splitPercentage
@@ -243,7 +254,8 @@ export async function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
   return updateDoc(billDoc(bill.id), {
     title: edit.title,
     totalAmount: edit.totalAmount,
-    installments: edit.installments,
+    installments: edit.recurring ? 1 : edit.installments,
+    recurring: edit.recurring,
     firstDueDate: edit.firstDueDate,
     payerType: edit.payerType,
     participants,
@@ -251,6 +263,11 @@ export async function updateSharedBill(bill: SharedBill, edit: SharedBillEdit) {
     ...(reconfirm || (material && bill.status === 'REJECTED') ? { status: 'PENDING', respondedAt: null, creatorAcknowledged: false } : {}),
     updatedAt: now,
   })
+}
+
+/** Só a numeração na série original (ex.: 11/36): não muda valores nem pede novo aceite. */
+export function setSharedNumbering(bill: SharedBill, installmentOffset: number, installmentTotal: number) {
+  return updateDoc(billDoc(bill.id), { installmentOffset, installmentTotal, updatedAt: new Date().toISOString() })
 }
 
 export function cancelSharedBill(bill: SharedBill) {
