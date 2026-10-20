@@ -9,7 +9,11 @@ import { useRecurringMaterializer } from '@/hooks/use-recurring'
 import { useSharedReconciler } from '@/hooks/use-shared'
 import { useTransferSync } from '@/hooks/use-transfers'
 import { useThemeSync } from '@/hooks/use-theme'
+import { readAuthAction } from '@/lib/auth'
+import { isFirebaseConfigured } from '@/lib/firebase'
 import { useUIStore, type View } from '@/store/ui-store'
+
+const AuthActionScreen = lazy(() => import('@/components/auth/auth-action-screen').then((m) => ({ default: m.AuthActionScreen })))
 
 /**
  * Cada tela é um arquivo separado: o celular baixa só a que vai abrir.
@@ -61,7 +65,20 @@ function usePrefetchPages() {
   }, [])
 }
 
-export default function App() {
+/** Link do e-mail (nova senha, troca de e-mail) abre a página própria, fora do app logado. */
+export default function Root() {
+  const action = isFirebaseConfigured ? readAuthAction() : null
+  if (action) {
+    return (
+      <Suspense fallback={null}>
+        <AuthActionScreen mode={action.mode} code={action.code} />
+      </Suspense>
+    )
+  }
+  return <App />
+}
+
+function App() {
   useThemeSync()
   useCloudSync()
   useRecurringMaterializer()

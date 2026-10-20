@@ -199,9 +199,19 @@ function ResetForm({ defaultEmail, onBack }: { defaultEmail: string; onBack: () 
 
 // ---------------------------------------------------------------------------
 
+/** Vindo da página do link (`?recuperar=1` / `?email=`): abre já no lugar certo e limpa a URL. */
+function initialFromUrl(): { mode: Mode; email: string } {
+  const q = new URLSearchParams(window.location.search)
+  const email = q.get('email') ?? ''
+  const mode: Mode = q.get('recuperar') ? 'reset' : 'login'
+  if (q.has('email') || q.has('recuperar')) window.history.replaceState(null, '', window.location.pathname)
+  return { mode, email }
+}
+
 export function LoginScreen() {
-  const [mode, setMode] = useState<Mode>('login')
-  const [resetEmail, setResetEmail] = useState('')
+  const [initial] = useState(initialFromUrl)
+  const [mode, setMode] = useState<Mode>(initial.mode)
+  const [resetEmail, setResetEmail] = useState(initial.email)
   const google = useAuthAction()
   const [googlePending, setGooglePending] = useState(false)
 

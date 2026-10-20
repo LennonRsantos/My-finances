@@ -1,4 +1,7 @@
 import {
+  applyActionCode,
+  checkActionCode,
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
   deleteUser,
   EmailAuthProvider,
@@ -13,6 +16,7 @@ import {
   updatePassword,
   updateProfile,
   verifyBeforeUpdateEmail,
+  verifyPasswordResetCode,
   type User,
 } from 'firebase/auth'
 import { useAuthStore } from '@/store/auth-store'
@@ -38,6 +42,37 @@ export async function signUpWithEmail(name: string, email: string, password: str
 
 export function resetPassword(email: string) {
   return sendPasswordResetEmail(getFirebase().auth, email)
+}
+
+// ---------------------------------------------------------------------------
+// Links de e-mail (redefinir senha, confirmar troca de e-mail)
+// ---------------------------------------------------------------------------
+
+export type AuthActionMode = 'resetPassword' | 'verifyEmail' | 'verifyAndChangeEmail' | 'recoverEmail'
+
+/** Link do e-mail do Firebase aberto no app (`?mode=...&oobCode=...`); `null` se não é um. */
+export function readAuthAction(search = window.location.search): { mode: AuthActionMode; code: string } | null {
+  const q = new URLSearchParams(search)
+  const mode = q.get('mode')
+  const code = q.get('oobCode')
+  if (!code || !mode) return null
+  return ['resetPassword', 'verifyEmail', 'verifyAndChangeEmail', 'recoverEmail'].includes(mode) ? { mode: mode as AuthActionMode, code } : null
+}
+
+/** Confere o link de redefinição; devolve o e-mail da conta. */
+export function checkResetLink(code: string) {
+  return verifyPasswordResetCode(getFirebase().auth, code)
+}
+
+export function saveNewPassword(code: string, password: string) {
+  return confirmPasswordReset(getFirebase().auth, code, password)
+}
+
+/** Confirma e-mail, troca de e-mail ou volta do e-mail anterior; devolve o e-mail envolvido. */
+export async function applyEmailLink(code: string) {
+  const info = await checkActionCode(getFirebase().auth, code)
+  await applyActionCode(getFirebase().auth, code)
+  return info.data.email ?? info.data.previousEmail ?? null
 }
 
 export function signOut() {
@@ -129,6 +164,8 @@ const MESSAGES: Record<string, string> = {
   'auth/user-mismatch': 'Use a mesma conta Google com que você entrou.',
   'auth/provider-already-linked': 'Esta conta já tem senha.',
   'auth/credential-already-in-use': 'Este e-mail já está ligado a outra conta.',
+  'auth/expired-action-code': 'Este link expirou. Peça um novo.',
+  'auth/invalid-action-code': 'Este link não vale mais: já foi usado ou foi substituído por um mais novo.',
   'auth/unauthorized-domain': 'Domínio não autorizado. Adicione-o em Authentication > Configurações > Domínios autorizados.',
 }
 
