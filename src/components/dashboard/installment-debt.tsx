@@ -122,11 +122,11 @@ export function InstallmentDebtCard({ debt }: { debt: InstallmentDebt }) {
               <button
                 type="button"
                 onClick={() => setPicked(new Set(sorted.map((i) => i.installmentId)))}
-                className="font-medium underline-offset-2 hover:underline"
+                className="-my-2 py-2 font-medium underline-offset-2 hover:underline"
               >
                 Todas
               </button>
-              <button type="button" onClick={() => setPicked(new Set())} className="font-medium underline-offset-2 hover:underline">
+              <button type="button" onClick={() => setPicked(new Set())} className="-my-2 py-2 font-medium underline-offset-2 hover:underline">
                 Nenhuma
               </button>
             </div>
@@ -177,7 +177,7 @@ export function InstallmentDebtCard({ debt }: { debt: InstallmentDebt }) {
                   <button
                     type="button"
                     onClick={() => toggleFixedSeries(i.installmentId)}
-                    className="font-medium text-foreground underline-offset-2 hover:underline"
+                    className="-my-2 py-2 font-medium text-foreground underline-offset-2 hover:underline"
                   >
                     É conta fixa
                   </button>
@@ -189,7 +189,7 @@ export function InstallmentDebtCard({ debt }: { debt: InstallmentDebt }) {
         {!selecting && fixed.length > 0 && (
           <p className="text-xs text-muted-foreground">
             {fixed.length} {fixed.length === 1 ? 'parcelamento marcado' : 'parcelamentos marcados'} como conta fixa, fora do saldo.{' '}
-            <button type="button" onClick={() => fixed.forEach(toggleFixedSeries)} className="font-medium text-foreground underline-offset-2 hover:underline">
+            <button type="button" onClick={() => fixed.forEach(toggleFixedSeries)} className="-my-2 py-2 font-medium text-foreground underline-offset-2 hover:underline">
               Desfazer
             </button>
           </p>

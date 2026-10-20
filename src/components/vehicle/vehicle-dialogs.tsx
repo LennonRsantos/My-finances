@@ -1011,7 +1011,8 @@ function QuoteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone
   })
   const { fields, append, remove } = useFieldArray({ control, name: 'items' })
   const [items, installments, paymentMethod] = useWatch({ control, name: ['items', 'installments', 'paymentMethod'] })
-  const total = items.reduce((a, i) => a + cents(i.amount ?? ''), 0)
+  // Item sem valor ainda conta como zero (cents('') é NaN).
+  const total = items.reduce((a, i) => a + (cents(i.amount ?? '') || 0), 0)
   const n = /^\d+$/.test(installments) ? Number(installments) : 1
   const e = formState.errors
 
@@ -1034,8 +1035,9 @@ function QuoteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone
           <Label>Itens</Label>
           <ul className="flex flex-col gap-2">
             {fields.map((f, k) => (
-              <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_9.5rem_auto] items-start gap-2">
-                <div className="flex flex-col gap-1">
+              // Celular: nome numa linha, valor e remover embaixo; a partir de sm, tudo numa linha.
+              <li key={f.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 sm:grid-cols-[minmax(0,1fr)_9.5rem_auto]">
+                <div className="col-span-2 flex flex-col gap-1 sm:col-span-1">
                   <Input aria-label={`Item ${k + 1}`} placeholder={k === 0 ? 'Ex.: Óleo 5W30' : 'Peça ou serviço'} aria-invalid={!!e.items?.[k]?.name} {...register(`items.${k}.name`)} />
                   <FieldError message={e.items?.[k]?.name?.message} />
                 </div>
@@ -1134,7 +1136,7 @@ function CompleteForm({ vehicle, currentKm, reminder, onDone }: { vehicle: Vehic
     },
   })
   const [amount, installments, paid, paymentMethod, kmText] = useWatch({ control, name: ['amount', 'installments', 'paid', 'paymentMethod', 'km'] })
-  const total = q ? qTotal : cents(amount)
+  const total = q ? qTotal : cents(amount) || 0
   const n = /^\d+$/.test(installments) ? Number(installments) : 1
   const sharing = shareAvailable && share.on && total > 0
   const typedKm = toKm(kmText)

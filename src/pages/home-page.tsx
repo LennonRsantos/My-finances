@@ -662,7 +662,7 @@ export function HomePage() {
         <div
           role="tablist"
           aria-label="Seções da casa"
-          className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-4 sm:rounded-xl sm:bg-muted sm:p-1 sm:px-1"
+          className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 sm:grid-cols-4"
         >
           {tabs.map((t) => (
             <button
@@ -674,8 +674,8 @@ export function HomePage() {
               aria-controls="home-tabpanel"
               onClick={() => setTab(t.key)}
               className={cn(
-                'flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:rounded-lg sm:border-0',
-                tab === t.key ? 'border-foreground bg-foreground text-background sm:bg-card sm:text-foreground sm:shadow-sm' : 'text-muted-foreground',
+                'flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                tab === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {t.label}
@@ -693,7 +693,7 @@ export function HomePage() {
 
         <div id="home-tabpanel" role="tabpanel" aria-labelledby={`home-tab-${tab}`} className="flex flex-col gap-4">
           {tab === 'contas' && (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
               <BillsCard open={setDialog} />
               <div className="flex flex-col gap-4">
                 <CompareCard />
@@ -702,7 +702,7 @@ export function HomePage() {
             </div>
           )}
           {tab === 'moradia' && (
-            <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 lg:items-start">
               <HousingCard open={setDialog} />
               <SharedBillsCard
                 filter={(b) => b.categoryId === HOME_CATEGORY_ID}

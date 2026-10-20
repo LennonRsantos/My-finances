@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Category, Cents, Debt, Installment, ISODate, MaintenanceQuote, MaintenanceReminder, MaintenanceUndo, RecurringCost, Subcategory, Transaction, Vehicle, YearMonth } from '@/types/finance'
+import type { Category, Cents, Debt, Goal, GoalDeposit, Installment, ISODate, MaintenanceQuote, MaintenanceReminder, MaintenanceUndo, RecurringCost, Subcategory, Transaction, Vehicle, YearMonth } from '@/types/finance'
 import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
@@ -68,6 +68,7 @@ interface FinanceData {
   debts: Debt[]
   vehicles: Vehicle[]
   maintenance: MaintenanceReminder[]
+  goals: Goal[]
 }
 
 interface FinanceState extends FinanceData {
@@ -118,6 +119,12 @@ interface FinanceState extends FinanceData {
   /** Apaga lançamentos, parcelamentos e fixos; mantém categorias. */
   clearTransactions: () => void
   loadExampleData: () => void
+  /** Cria ou atualiza meta (nome, alvo, prazo; depósitos vão junto). */
+  saveGoal: (g: Goal) => void
+  removeGoal: (id: Goal['id']) => void
+  /** Guardar (valor positivo) ou retirar (negativo) dinheiro da meta. */
+  addGoalDeposit: (goalId: Goal['id'], deposit: GoalDeposit) => void
+  removeGoalDeposit: (goalId: Goal['id'], depositId: GoalDeposit['id']) => void
   /** Importa backup: cria ou substitui por id; não apaga o que já existe. */
   importData: (data: BackupData) => void
   /** Cria ou atualiza categoria. */
@@ -175,6 +182,7 @@ export const initialFinanceData = (): FinanceData => ({
   debts: [],
   vehicles: [],
   maintenance: [],
+  goals: [],
 })
 
 type Mutable = keyof FinanceData
@@ -449,6 +457,20 @@ export const useFinanceStore = create<FinanceState>()(
 
         loadExampleData: () => commit({ upserts: txWrites(buildMockTransactions()) }),
 
+        saveGoal: (data) => commit({ upserts: [{ name: 'goals', data }] }),
+
+        removeGoal: (id) => commit({ deletes: [{ name: 'goals', id }] }),
+
+        addGoalDeposit: (goalId, deposit) => {
+          const g = get().goals.find((x) => x.id === goalId)
+          if (g) commit({ upserts: [{ name: 'goals', data: { ...g, deposits: [...g.deposits, deposit] } }] })
+        },
+
+        removeGoalDeposit: (goalId, depositId) => {
+          const g = get().goals.find((x) => x.id === goalId)
+          if (g) commit({ upserts: [{ name: 'goals', data: { ...g, deposits: g.deposits.filter((d) => d.id !== depositId) } }] })
+        },
+
         importData: (data) =>
           commit({
             upserts: [
@@ -459,6 +481,7 @@ export const useFinanceStore = create<FinanceState>()(
               ...data.debts.map((d) => ({ name: 'debts' as const, data: d })),
               ...data.vehicles.map((d) => ({ name: 'vehicles' as const, data: d })),
               ...data.maintenance.map((d) => ({ name: 'maintenance' as const, data: d })),
+              ...data.goals.map((d) => ({ name: 'goals' as const, data: d })),
               ...txWrites(data.transactions),
             ],
           }),
@@ -621,7 +644,8 @@ export const useFinanceStore = create<FinanceState>()(
       // v6: veículos e lembretes de manutenção.
       // v7: subcategorias da casa (água, gás, condomínio, IPTU, manutenção).
       // v8: financiamento do imóvel e compras da casa.
-      version: 8,
+      // v9: metas (caixinhas).
+      version: 9,
       migrate: (persisted, version) => {
         let state = persisted as FinanceData
         if (version < 2) {
@@ -652,11 +676,12 @@ export const useFinanceStore = create<FinanceState>()(
           const missing = missingDefaults(state.categories, state.subcategories, 3)
           state = { ...state, subcategories: [...state.subcategories, ...missing.subcategories] }
         }
+        if (version < 9) state = { ...state, goals: [] }
         return state
       },
       // Logado, o Firestore é a fonte; o navegador só guarda o modo sem login.
       storage: localOnlyStorage,
-      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance }) => ({
+      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance, goals }) => ({
         categories,
         subcategories,
         transactions,
@@ -665,6 +690,7 @@ export const useFinanceStore = create<FinanceState>()(
         debts,
         vehicles,
         maintenance,
+        goals,
       }),
     },
   ),

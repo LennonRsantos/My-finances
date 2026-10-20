@@ -3,6 +3,8 @@ import { BudgetProgress } from '@/components/dashboard/budget-progress'
 import { AreaStrip } from '@/components/dashboard/area-strip'
 import { CategoryDonut } from '@/components/dashboard/category-donut'
 import { DueAlerts } from '@/components/dashboard/due-alerts'
+import { ForecastCard } from '@/components/dashboard/forecast-card'
+import { GoalsCard } from '@/components/dashboard/goals-card'
 import { InstallmentDebtCard } from '@/components/dashboard/installment-debt'
 import { ReceivablesCard } from '@/components/dashboard/receivables-card'
 import { MonthSelector } from '@/components/dashboard/month-selector'
@@ -68,6 +70,7 @@ export function DashboardPage() {
             <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-5">
               <div className="flex flex-col gap-4 lg:col-span-2">
                 <DueAlerts alerts={data.alerts} days={data.dueSoonDays} />
+                <GoalsCard />
                 <InstallmentDebtCard debt={data.installmentDebt} />
                 <BudgetProgress data={data.budgetUsage} />
               </div>
@@ -75,6 +78,7 @@ export function DashboardPage() {
                 {data.hasData && <AreaStrip byArea={data.byArea} total={data.summary.monthExpenses} />}
                 <CategoryDonut data={data.categorySpending} />
                 <MonthlyComparison data={data.monthlySeries} />
+                <ForecastCard />
               </div>
             </div>
           </>

@@ -495,7 +495,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
                   type="button"
                   onClick={() => setValue('dueDate', d.value, { shouldValidate: true })}
                   className={cn(
-                    'h-8 rounded-full border px-3 text-xs',
+                    'h-9 rounded-full border px-4 text-sm',
                     dueDate === d.value ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted',
                   )}
                 >

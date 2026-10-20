@@ -116,7 +116,7 @@ export function ReportsPage() {
                       <li key={area} className="flex flex-col gap-1.5">
                         <div className="flex items-center justify-between gap-2 text-sm">
                           {view ? (
-                            <button type="button" onClick={() => setView(view)} className="flex items-center gap-2 font-medium hover:underline">
+                            <button type="button" onClick={() => setView(view)} className="-my-2 flex items-center gap-2 py-2 font-medium hover:underline">
                               <Icon className="size-4 text-muted-foreground" />
                               {label}
                             </button>

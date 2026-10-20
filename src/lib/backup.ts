@@ -3,7 +3,7 @@
  * volta para importar. Aceita também o formato salvo pelo app no navegador
  * (`localStorage['financas-data']`, com `{ state, version }`).
  */
-import type { Category, Debt, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
+import type { Category, Debt, Goal, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
 
 export interface BackupData {
   categories: Category[]
@@ -14,6 +14,8 @@ export interface BackupData {
   debts: Debt[]
   vehicles: Vehicle[]
   maintenance: MaintenanceReminder[]
+  /** Backups antigos não têm: vem vazio */
+  goals: Goal[]
 }
 
 export interface ParsedBackup {
@@ -21,7 +23,7 @@ export interface ParsedBackup {
   settings: Partial<Omit<UserSettings, 'theme'>> | null
 }
 
-const KEYS = ['categories', 'subcategories', 'transactions', 'installments', 'recurringCosts', 'debts', 'vehicles', 'maintenance'] as const
+const KEYS = ['categories', 'subcategories', 'transactions', 'installments', 'recurringCosts', 'debts', 'vehicles', 'maintenance', 'goals'] as const
 
 /** Lista de objetos com `id` texto; o resto é ignorado. */
 const items = <T>(value: unknown): T[] =>

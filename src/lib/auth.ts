@@ -40,8 +40,16 @@ export async function signUpWithEmail(name: string, email: string, password: str
   if (current?.uid === user.uid) set({ user: { ...current, name } })
 }
 
+/**
+ * Links dos e-mails voltam para o próprio app (tela `AuthActionScreen`), não
+ * para a página padrão do Firebase. Funciona sem editar os modelos no Console
+ * (bloqueado em projeto novo no plano gratuito). O domínio precisa estar em
+ * Authentication > Configurações > Domínios autorizados.
+ */
+const appLinkSettings = () => ({ url: `${window.location.origin}/`, handleCodeInApp: true })
+
 export function resetPassword(email: string) {
-  return sendPasswordResetEmail(getFirebase().auth, email)
+  return sendPasswordResetEmail(getFirebase().auth, email, appLinkSettings())
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +139,7 @@ export async function changePassword(newPassword: string, currentPassword?: stri
 export async function changeEmail(newEmail: string, currentPassword?: string) {
   const user = currentUser()
   await reauthenticate(user, currentPassword)
-  await verifyBeforeUpdateEmail(user, newEmail)
+  await verifyBeforeUpdateEmail(user, newEmail, appLinkSettings())
 }
 
 /** Apaga todos os dados no Firestore e depois a conta. */

@@ -1098,7 +1098,7 @@ export function VehiclePage() {
               </Button>
             </Card>
 
-            <div role="tablist" aria-label="Seções do veículo" className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:grid sm:grid-cols-4 sm:rounded-xl sm:bg-muted sm:p-1 sm:px-1">
+            <div role="tablist" aria-label="Seções do veículo" className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 sm:grid-cols-4">
               {(
                 [
                   ['resumo', 'Resumo'],
@@ -1114,8 +1114,8 @@ export function VehiclePage() {
                   aria-selected={tab === key}
                   onClick={() => setTab(key)}
                   className={cn(
-                    'h-10 shrink-0 rounded-full border px-4 text-sm font-medium whitespace-nowrap transition-colors sm:rounded-lg sm:border-0',
-                    tab === key ? 'border-foreground bg-foreground text-background sm:bg-card sm:text-foreground sm:shadow-sm' : 'text-muted-foreground',
+                    'h-10 min-w-0 truncate rounded-lg px-2 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    tab === key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {label}

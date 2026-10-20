@@ -332,6 +332,29 @@ export interface MaintenanceUndo {
   quote?: MaintenanceQuote | null
 }
 
+// ---------------------------------------------------------------------------
+// Metas (caixinhas)
+// ---------------------------------------------------------------------------
+
+/** Dinheiro guardado (ou retirado, se negativo) numa meta. Não é lançamento. */
+export interface GoalDeposit {
+  id: ID
+  date: ISODate
+  amount: Cents
+  /** "Já tenho guardado" ao criar: não conta como guardado no mês */
+  initial?: boolean
+}
+
+export interface Goal {
+  id: ID
+  name: string
+  target: Cents
+  /** Até quando juntar; `null` = sem prazo */
+  deadline: ISODate | null
+  deposits: GoalDeposit[]
+  createdAt: string
+}
+
 export const FUEL_LABELS: Record<FuelType, string> = {
   flex: 'Flex',
   gasolina: 'Gasolina',

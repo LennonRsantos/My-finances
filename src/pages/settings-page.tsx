@@ -352,9 +352,9 @@ function PreferencesSection() {
 // ---------------------------------------------------------------------------
 
 function downloadBackup() {
-  const { categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance } = useFinanceStore.getState()
+  const { categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance, goals } = useFinanceStore.getState()
   const { theme: _theme, ...settings } = useSettingsStore.getState().settings
-  const data = { app: 'financas', exportedAt: new Date().toISOString(), settings, categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance }
+  const data = { app: 'financas', exportedAt: new Date().toISOString(), settings, categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance, goals }
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
   const a = document.createElement('a')
   a.href = url
