@@ -78,7 +78,7 @@ function MonthOverview() {
     <Card className="flex flex-col gap-4 p-4 sm:p-5">
       <div className="flex flex-col gap-0.5">
         <span className="text-sm text-muted-foreground">Casa em {formatMonthLabel(month).toLowerCase()}</span>
-        <span className="text-3xl font-semibold tracking-tight tabular-nums sm:text-4xl">{formatMoney(data.total)}</span>
+        <span className="text-2xl font-semibold tracking-tight tabular-nums sm:text-4xl">{formatMoney(data.total)}</span>
         {data.total === 0 && <span className="text-sm text-muted-foreground">Nenhum gasto da casa lançado neste mês.</span>}
       </div>
       <div
@@ -99,7 +99,7 @@ function MonthOverview() {
               <span className="size-2 shrink-0 rounded-full" style={{ background: p.color }} aria-hidden />
               {p.label}
             </dt>
-            <dd className={cn('truncate text-sm font-semibold tabular-nums sm:text-base', p.key === 'atrasado' && p.value > 0 && 'text-expense')}>
+            <dd className={cn('truncate text-[13px] font-semibold tabular-nums min-[360px]:text-sm sm:text-base', p.key === 'atrasado' && p.value > 0 && 'text-expense')}>
               {formatMoney(p.value)}
             </dd>
           </div>
@@ -410,19 +410,20 @@ function HousingRow({
   action: ReactNode
 }) {
   return (
-    <li className="flex items-center gap-3 py-3">
+    // Tela estreita: o botão desce para a linha de baixo em vez de espremer o texto.
+    <li className="flex flex-wrap items-center gap-3 py-3">
       <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
         <Icon className="size-4" />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">
+      <span className="min-w-[9rem] flex-1">
+        <span className="flex flex-wrap gap-x-1 text-sm font-medium">
           {title}
-          {value && <span className="tabular-nums"> · {value}</span>}
+          {value && <span className="whitespace-nowrap tabular-nums">· {value}</span>}
         </span>
         <span className="block text-xs text-muted-foreground">{detail}</span>
         {badge && <span className="mt-1 flex">{badge}</span>}
       </span>
-      {action}
+      <span className="ml-auto shrink-0">{action}</span>
     </li>
   )
 }

@@ -32,7 +32,7 @@ function BigMoney({ value }: { value: number }) {
   const whole = comma >= 0 ? formatted.slice(0, comma) : formatted
   const cents = comma >= 0 ? formatted.slice(comma) : ''
   return (
-    <span className={cn('text-[2.5rem] font-semibold leading-none tracking-[-0.03em] tabular-nums sm:text-5xl', value < 0 && 'text-expense')}>
+    <span className={cn('text-[2rem] font-semibold leading-none tracking-[-0.03em] tabular-nums whitespace-nowrap sm:text-5xl', value < 0 && 'text-expense')}>
       {whole}
       <span className="text-[0.55em] font-medium tracking-normal text-muted-foreground">{cents}</span>
     </span>

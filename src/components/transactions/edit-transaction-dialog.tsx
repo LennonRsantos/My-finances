@@ -218,7 +218,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                 id="edit-amount"
                 inputMode="decimal"
                 autoComplete="off"
-                className="h-14 pl-10 text-2xl font-semibold sm:text-2xl"
+                className="h-14 pl-10 text-xl font-semibold sm:text-2xl"
                 aria-invalid={!!errors.amount}
                 {...register('amount', { setValueAs: parseMoneyInput })}
               />

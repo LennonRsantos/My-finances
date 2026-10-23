@@ -48,7 +48,7 @@ function InvoiceCard({ card, month, setMonth, onImport }: { card: CreditCard; mo
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-3xl font-semibold tracking-tight tabular-nums">{formatMoney(inv.total)}</span>
+            <span className="text-2xl font-semibold tracking-tight tabular-nums sm:text-3xl">{formatMoney(inv.total)}</span>
             <span className="flex items-center gap-2 text-sm text-muted-foreground">
               <Badge tone={statusTone[inv.status]}>{INVOICE_LABEL[inv.status]}</Badge>
               {inv.paid > 0 && inv.open > 0 && <span>falta {formatMoney(inv.open)}</span>}

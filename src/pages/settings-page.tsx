@@ -598,7 +598,8 @@ export function SettingsPage() {
       <PageHeader title="Configurações" />
       <main className="mx-auto grid w-full max-w-4xl grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 sm:px-6 md:grid-cols-[180px_minmax(0,1fr)]">
         <nav aria-label="Seções" className="md:sticky md:top-20 md:self-start">
-          <ul className="flex gap-1 overflow-x-auto md:flex-col">
+          {/* Celular: grade 2×2 (sem aba cortada); computador: lista ao lado. */}
+          <ul className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 sm:grid-cols-4 md:flex md:flex-col md:bg-transparent md:p-0">
             {SETTINGS_SECTIONS.map(({ id, label }) => (
               <li key={id}>
                 <button
@@ -606,8 +607,8 @@ export function SettingsPage() {
                   onClick={() => setSection(id)}
                   aria-current={section === id ? 'page' : undefined}
                   className={cn(
-                    'flex h-9 w-full items-center whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                    section === id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    'flex h-9 w-full items-center justify-center whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring md:justify-start',
+                    section === id ? 'bg-card text-foreground shadow-sm md:bg-muted md:shadow-none' : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {label}

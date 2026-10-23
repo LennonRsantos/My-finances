@@ -36,9 +36,13 @@ export function DueAlerts({ alerts, days }: { alerts: DueAlertsData; days: numbe
         <div className="flex flex-col gap-1">
           <CardTitle>Próximas contas</CardTitle>
           <CardDescription>
-            {rows.length
-              ? `${rows.length} ${rows.length === 1 ? 'conta' : 'contas'} até ${days} dias: ${formatMoney(total)}`
-              : `Nada vencendo nos próximos ${days} dias`}
+            {rows.length ? (
+              <>
+                {rows.length} {rows.length === 1 ? 'conta' : 'contas'} até {days} dias: <span className="whitespace-nowrap">{formatMoney(total)}</span>
+              </>
+            ) : (
+              `Nada vencendo nos próximos ${days} dias`
+            )}
           </CardDescription>
         </div>
         <Button size="sm" variant="ghost" onClick={() => setView('calendario')}>

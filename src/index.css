@@ -85,6 +85,9 @@
   }
   html {
     -webkit-tap-highlight-color: transparent;
+    /* Celular não "infla" textos por conta própria (Chrome/Safari). */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
   body {
     background: var(--background);

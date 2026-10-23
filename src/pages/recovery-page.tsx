@@ -135,18 +135,18 @@ function DiagnosisCard({ d, health }: { d: Diagnosis; health: Exclude<HealthLeve
               <Icon className="size-3.5" />
               {title}
             </Badge>
-            <p className="text-2xl font-semibold">
+            <p className="text-xl font-semibold sm:text-2xl">
               {health === 'vermelho' ? (
                 <>
-                  Você gasta <span className="text-expense">{formatMoney(-d.balance)}</span> a mais do que ganha por mês
+                  Você gasta <span className="whitespace-nowrap text-expense">{formatMoney(-d.balance)}</span> a mais do que ganha por mês
                 </>
               ) : health === 'limite' ? (
                 <>
-                  Sobram só <span className="text-warning">{formatMoney(d.balance)}</span> por mês
+                  Sobram só <span className="whitespace-nowrap text-warning">{formatMoney(d.balance)}</span> por mês
                 </>
               ) : (
                 <>
-                  Sobram <span className="text-income">{formatMoney(d.balance)}</span> por mês
+                  Sobram <span className="whitespace-nowrap text-income">{formatMoney(d.balance)}</span> por mês
                 </>
               )}
             </p>
@@ -172,12 +172,12 @@ function DiagnosisCard({ d, health }: { d: Diagnosis; health: Exclude<HealthLeve
             const above = share > limit
             return (
               <div key={g} className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between gap-2 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm">
                   <span>{GROUP_LABELS[g]}</span>
-                  <span className="text-muted-foreground">
+                  <span className="whitespace-nowrap text-muted-foreground">
                     {formatMoney(d.groups[g])} ·{' '}
                     <span className={cn('font-medium', above ? 'text-expense' : 'text-foreground')}>{pct(share)}</span>
-                    <span className="text-xs"> (ideal até {pct(limit)})</span>
+                    <span className="text-xs"> (até {pct(limit)})</span>
                   </span>
                 </div>
                 <div className="relative h-2 w-full overflow-hidden rounded-full bg-muted">

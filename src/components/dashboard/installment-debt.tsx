@@ -27,9 +27,9 @@ const detail = (i: EndingInstallment) =>
 
 function Figure({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-lg font-semibold tabular-nums">{value}</span>
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="truncate text-xs text-muted-foreground">{label}</span>
+      <span className="truncate text-base font-semibold tabular-nums sm:text-lg">{value}</span>
     </div>
   )
 }
@@ -113,7 +113,7 @@ export function InstallmentDebtCard({ debt }: { debt: InstallmentDebt }) {
       <CardContent className="flex flex-col gap-4">
         {picked ? (
           <div className="flex flex-col gap-2 rounded-xl border bg-muted/40 p-3">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 min-[360px]:grid-cols-3">
               <Figure label="Selecionadas" value={formatMoney(chosen.reduce((a, i) => a + i.remainingTotal, 0))} />
               <Figure label="Por mês" value={formatMoney(chosen.reduce((a, i) => a + i.monthly, 0))} />
               <Figure label="Contas" value={`${chosen.length} de ${debt.count}`} />
@@ -132,7 +132,7 @@ export function InstallmentDebtCard({ debt }: { debt: InstallmentDebt }) {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 min-[360px]:grid-cols-3">
             <Figure label="Falta pagar" value={formatMoney(debt.total)} />
             <Figure label="Por mês" value={formatMoney(debt.monthly)} />
             <Figure label="Parcelamentos" value={debt.count} />

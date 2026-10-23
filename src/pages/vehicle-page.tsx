@@ -746,7 +746,7 @@ function FinancingTab({ vehicle, open }: { vehicle: Vehicle; open: (d: VehicleDi
               <Landmark className="size-4" />
               Financiamentos e empréstimos
             </span>
-            <span className="text-2xl font-semibold tabular-nums">{formatMoney(monthly)}/mês</span>
+            <span className="text-xl font-semibold tabular-nums sm:text-2xl">{formatMoney(monthly)}/mês</span>
             <span className="text-sm text-muted-foreground">Faltam {formatMoney(remaining)} no total.</span>
           </div>
           <Button size="sm" onClick={() => open({ kind: 'financing', vehicle })}>
@@ -879,7 +879,7 @@ function ReserveTab({ vehicle, currentKm, open }: { vehicle: Vehicle; currentKm:
             <PiggyBank className="size-4" />
             Guarde por mês
           </span>
-          <span className="text-3xl font-semibold tabular-nums">{formatMoney(r.total)}</span>
+          <span className="text-2xl font-semibold tabular-nums sm:text-3xl">{formatMoney(r.total)}</span>
           <p className="text-sm text-muted-foreground">
             Separando esse valor todo mês, a revisão, o IPVA e a troca de carro deixam de pegar você de surpresa.
           </p>

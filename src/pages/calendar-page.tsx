@@ -97,14 +97,15 @@ export function CalendarPage() {
     <>
       <PageHeader title="Calendário" actions={<MonthSelector />} />
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
-        <div className="grid grid-cols-3 gap-3">
+        {/* Abaixo de 360px: um total por linha, sem cortar o valor. */}
+        <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3 sm:gap-3">
           {STATUS_ORDER.map((s) => (
-            <Card key={s} className="flex flex-col gap-1 p-3">
+            <Card key={s} className="flex min-w-0 flex-col gap-1 p-2.5 max-[359px]:flex-row max-[359px]:items-center max-[359px]:justify-between sm:p-3">
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className={cn('size-2 rounded-full', statusDot[s])} />
                 {statusLabels[s]} ({summary[s].count})
               </span>
-              <span className={cn('font-semibold', s === 'atrasado' && summary[s].total > 0 && 'text-expense')}>
+              <span className={cn('truncate text-[13px] font-semibold tabular-nums min-[360px]:text-sm sm:text-base', s === 'atrasado' && summary[s].total > 0 && 'text-expense')}>
                 {formatMoney(summary[s].total)}
               </span>
             </Card>

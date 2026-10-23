@@ -380,7 +380,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
               inputMode="decimal"
               autoComplete="off"
               placeholder="0,00"
-              className="h-14 pl-10 text-2xl font-semibold sm:text-2xl"
+              className="h-14 pl-10 text-xl font-semibold sm:text-2xl"
               aria-invalid={!!errors.amount}
               {...register('amount', { setValueAs: parseMoneyInput })}
             />

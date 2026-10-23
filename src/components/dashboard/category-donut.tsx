@@ -81,15 +81,16 @@ export function CategoryDonut({ data }: { data: CategorySpending[] }) {
                     onMouseEnter={() => setHovered(d.category.id)}
                     onMouseLeave={() => setHovered(null)}
                     className={cn(
-                      'flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm transition-opacity',
+                      'flex items-center gap-2 rounded-lg px-1 py-1.5 text-sm transition-opacity sm:gap-2.5 sm:px-2',
                       hovered && hovered !== d.category.id && 'opacity-50',
                     )}
                   >
                     <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: d.category.color }} aria-hidden />
-                    <Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                    {/* Tela estreita: sem ícone, para o nome da categoria caber. */}
+                    <Icon className="size-4 shrink-0 text-muted-foreground max-[379px]:hidden" strokeWidth={1.75} />
                     <span className="min-w-0 flex-1 truncate">{d.category.name}</span>
-                    <span className="tabular-nums text-muted-foreground">{pct(d.share)}</span>
-                    <span className="w-24 shrink-0 text-right font-medium tabular-nums">{formatMoney(d.total)}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:text-sm">{pct(d.share)}</span>
+                    <span className="shrink-0 text-right font-medium tabular-nums sm:w-24">{formatMoney(d.total)}</span>
                   </li>
                 )
               })}

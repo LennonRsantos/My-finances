@@ -108,14 +108,14 @@ export function ForecastCard() {
         </div>
 
         {/* Mesma informação em texto: não depende da cor nem do gráfico. */}
-        <table className="w-full text-sm">
+        <table className="w-full text-xs sm:text-sm [&_td]:whitespace-nowrap">
           <caption className="sr-only">Previsão por mês</caption>
           <thead>
             <tr className="text-xs text-muted-foreground">
               <th className="pb-1 text-left font-normal">Mês</th>
               <th className="pb-1 text-right font-normal">Receitas</th>
               <th className="pb-1 text-right font-normal">Despesas</th>
-              <th className="pb-1 text-right font-normal">Saldo no fim</th>
+              <th className="pb-1 text-right font-normal">Saldo</th>
             </tr>
           </thead>
           <tbody className="tabular-nums">
