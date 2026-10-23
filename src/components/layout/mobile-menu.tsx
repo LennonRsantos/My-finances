@@ -4,12 +4,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { cn } from '@/lib/utils'
 import { SETTINGS_SECTIONS, SettingsSectionContent, type Section } from '@/pages/settings-page'
 import { useAuthStore } from '@/store/auth-store'
-import { useUIStore } from '@/store/ui-store'
-import { NAV_ITEMS } from './nav-items'
 import { Avatar, useSignOut } from './user-menu'
 
-/** Telas que não cabem na barra inferior (Calendário, Relatórios). */
-const EXTRA_VIEWS = NAV_ITEMS.filter((i) => !i.mobile && !i.desktopOnly && i.view !== 'configuracoes')
 
 function MenuGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -86,8 +82,6 @@ function Identity() {
  * as telas extras, as seções de Configurações (abertas no próprio painel) e sair.
  */
 export function MobileMenu() {
-  const view = useUIStore((s) => s.view)
-  const setView = useUIStore((s) => s.setView)
   const signedIn = useAuthStore((s) => s.status === 'signed_in')
   const [open, setOpen] = useState(false)
   const [section, setSection] = useState<Section | null>(null)
@@ -140,20 +134,6 @@ export function MobileMenu() {
                 <Identity />
               </header>
               <div className="flex flex-col gap-5 overflow-y-auto p-4">
-                <MenuGroup title="Mais telas">
-                  {EXTRA_VIEWS.map(({ view: v, label, icon }) => (
-                    <MenuRow
-                      key={v}
-                      icon={icon}
-                      label={label}
-                      active={view === v}
-                      onClick={() => {
-                        setView(v)
-                        setOpen(false)
-                      }}
-                    />
-                  ))}
-                </MenuGroup>
                 <MenuGroup title="Configurações">
                   {SETTINGS_SECTIONS.map(({ id, label, icon }) => (
                     <MenuRow key={id} icon={icon} label={label} onClick={() => setSection(id)} />

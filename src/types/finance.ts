@@ -146,6 +146,10 @@ export interface Transaction {
   homeLink?: boolean | null
   /** Custo fixo ou variável; ausente = automático (conta fixa e parcela são fixos) */
   costKind?: CostKind | null
+  /** Cartão de crédito usado (aba Cartão) */
+  cardId?: CreditCard['id'] | null
+  /** Linha do extrato que originou ou foi ligada a este lançamento (não importa duas vezes) */
+  importKey?: string | null
   /** Hodômetro (km) no momento do gasto */
   odometer?: number | null
   /** Presente quando o lançamento é um abastecimento */
@@ -197,6 +201,7 @@ interface RecurringCostBase {
   /** Vínculo com a Casa e fixo/variável, copiados para cada mês (ver `Transaction`) */
   homeLink?: boolean | null
   costKind?: CostKind | null
+  cardId?: string | null
   createdAt: string
 }
 
@@ -342,6 +347,27 @@ export interface MaintenanceUndo {
   dueKm?: number | null
   dueDate?: ISODate | null
   quote?: MaintenanceQuote | null
+}
+
+// ---------------------------------------------------------------------------
+// Cartões de crédito
+// ---------------------------------------------------------------------------
+
+export interface CreditCard {
+  id: ID
+  name: string
+  bank: string | null
+  /** Últimos 4 dígitos, só para reconhecer o cartão */
+  last4: string | null
+  /** Dia em que a fatura fecha (compras depois dele vão para a fatura seguinte) */
+  closingDay: number
+  /** Dia de vencimento da fatura */
+  dueDay: number
+  limit: Cents | null
+  color: HexColor
+  /** Desativado quando excluído com compras lançadas (o histórico fica) */
+  active: boolean
+  createdAt: string
 }
 
 // ---------------------------------------------------------------------------

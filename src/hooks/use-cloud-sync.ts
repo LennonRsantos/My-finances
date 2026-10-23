@@ -36,6 +36,7 @@ async function prepareAccount(uid: string, finance: ReturnType<typeof useFinance
     vehicles: finance.vehicles,
     maintenance: finance.maintenance,
     goals: finance.goals,
+    cards: finance.cards,
   })
   await ensureDefaultCategories(uid)
 }
@@ -71,6 +72,7 @@ function startSync(uid: string): Unsubscribe {
     subscribeCollection(uid, 'vehicles', (vehicles) => useFinanceStore.setState({ vehicles }), reportSyncError),
     subscribeCollection(uid, 'maintenance', (maintenance) => useFinanceStore.setState({ maintenance }), reportSyncError),
     subscribeCollection(uid, 'goals', (goals) => useFinanceStore.setState({ goals }), reportSyncError),
+    subscribeCollection(uid, 'cards', (cards) => useFinanceStore.setState({ cards }), reportSyncError),
     subscribeSettings(uid, (remote) => {
       if (!remote) return
       useSettingsStore.setState((s) => ({ settings: { ...s.settings, ...remote, theme: s.settings.theme } }))

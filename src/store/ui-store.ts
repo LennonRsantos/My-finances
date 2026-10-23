@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { TransactionFilters, TransactionType, YearMonth } from '@/types/finance'
 import { currentYearMonth, shiftMonth } from '@/lib/dates'
 
-export type View = 'dashboard' | 'lancamentos' | 'calendario' | 'casa' | 'veiculo' | 'inteligencia' | 'relatorios' | 'configuracoes'
+export type View = 'dashboard' | 'lancamentos' | 'calendario' | 'casa' | 'veiculo' | 'cartoes' | 'inteligencia' | 'relatorios' | 'configuracoes'
 
 interface UIState {
   view: View

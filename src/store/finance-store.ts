@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Category, Cents, Debt, Goal, GoalDeposit, Installment, ISODate, MaintenanceQuote, MaintenanceReminder, MaintenanceUndo, RecurringCost, Subcategory, Transaction, Vehicle, YearMonth } from '@/types/finance'
+import type { Category, Cents, CreditCard, Debt, Goal, GoalDeposit, Installment, ISODate, MaintenanceQuote, MaintenanceReminder, MaintenanceUndo, RecurringCost, Subcategory, Transaction, Vehicle, YearMonth } from '@/types/finance'
 import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
@@ -31,10 +31,11 @@ export type TransactionEdit = Pick<
   | 'homeLink'
   | 'costKind'
   | 'vehicleId'
+  | 'cardId'
 >
 
 /** Campos que se propagam para as próximas ocorrências da série. */
-const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId'] as const
+const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
@@ -72,7 +73,14 @@ interface FinanceData {
   vehicles: Vehicle[]
   maintenance: MaintenanceReminder[]
   goals: Goal[]
+  cards: CreditCard[]
 }
+
+/** Uma linha do extrato já revisada: liga a um lançamento existente ou cria um novo. */
+export type StatementImport =
+  | { kind: 'link'; transactionId: Transaction['id']; cardId: string; importKey: string }
+  | { kind: 'new'; transaction: Transaction }
+  | { kind: 'installments'; purchase: { installment: Installment; transactions: Transaction[] } }
 
 interface FinanceState extends FinanceData {
   addTransaction: (t: Transaction) => void
@@ -122,6 +130,13 @@ interface FinanceState extends FinanceData {
   /** Apaga lançamentos, parcelamentos e fixos; mantém categorias. */
   clearTransactions: () => void
   loadExampleData: () => void
+  saveCard: (c: CreditCard) => void
+  /** Exclui o cartão; com compras lançadas, só desativa (o histórico fica). */
+  removeCard: (id: CreditCard['id']) => void
+  /** Marca como pagas as compras ainda abertas desta fatura (não cria outra despesa). */
+  payInvoice: (cardId: CreditCard['id'], ids: Transaction['id'][], date: ISODate) => void
+  /** Grava o extrato revisado de uma vez. */
+  importStatement: (lines: StatementImport[]) => void
   /** Cria ou atualiza meta (nome, alvo, prazo; depósitos vão junto). */
   saveGoal: (g: Goal) => void
   removeGoal: (id: Goal['id']) => void
@@ -186,6 +201,7 @@ export const initialFinanceData = (): FinanceData => ({
   vehicles: [],
   maintenance: [],
   goals: [],
+  cards: [],
 })
 
 type Mutable = keyof FinanceData
@@ -462,6 +478,46 @@ export const useFinanceStore = create<FinanceState>()(
 
         loadExampleData: () => commit({ upserts: txWrites(buildMockTransactions()) }),
 
+        saveCard: (data) => commit({ upserts: [{ name: 'cards', data }] }),
+
+        removeCard: (id) => {
+          const { cards, transactions } = get()
+          const c = cards.find((x) => x.id === id)
+          if (!c) return
+          const used = transactions.some((t) => t.cardId === id)
+          commit(used ? { upserts: [{ name: 'cards', data: { ...c, active: false } }] } : { deletes: [{ name: 'cards', id }] })
+        },
+
+        payInvoice: (cardId, ids, date) => {
+          const set = new Set(ids)
+          const items = get().transactions.filter((t) => set.has(t.id) && t.cardId === cardId && t.status !== 'pago')
+          if (items.length) commit({ upserts: txWrites(items.map((t) => ({ ...t, status: 'pago' as const, paymentDate: date }))) })
+        },
+
+        importStatement: (lines) => {
+          const { transactions } = get()
+          const byId = new Map(transactions.map((t) => [t.id, t]))
+          const upserts: cloud.DocWrite[] = []
+          for (const l of lines) {
+            if (l.kind === 'link') {
+              const t = byId.get(l.transactionId)
+              if (!t) continue
+              // Mantém a chave da primeira importação (outro arquivo da mesma fatura continua reconhecido pela compra).
+              upserts.push(...txWrites([{ ...t, cardId: l.cardId, importKey: t.importKey ?? l.importKey, paymentMethod: 'cartao_credito' }]))
+              // Parcela ou conta fixa: o resto da série (ainda sem cartão) passa a ser deste cartão.
+              const series = transactions.filter(
+                (x) =>
+                  x.id !== t.id &&
+                  !x.cardId &&
+                  ((t.installment && x.installment?.installmentId === t.installment.installmentId) || (t.recurringCostId && x.recurringCostId === t.recurringCostId)),
+              )
+              if (series.length) upserts.push(...txWrites(series.map((x) => ({ ...x, cardId: l.cardId, paymentMethod: 'cartao_credito' as const }))))
+            } else if (l.kind === 'new') upserts.push(...txWrites([l.transaction]))
+            else upserts.push({ name: 'installments', data: l.purchase.installment }, ...txWrites(l.purchase.transactions))
+          }
+          if (upserts.length) commit({ upserts })
+        },
+
         saveGoal: (data) => commit({ upserts: [{ name: 'goals', data }] }),
 
         removeGoal: (id) => commit({ deletes: [{ name: 'goals', id }] }),
@@ -487,6 +543,7 @@ export const useFinanceStore = create<FinanceState>()(
               ...data.vehicles.map((d) => ({ name: 'vehicles' as const, data: d })),
               ...data.maintenance.map((d) => ({ name: 'maintenance' as const, data: d })),
               ...data.goals.map((d) => ({ name: 'goals' as const, data: d })),
+              ...data.cards.map((d) => ({ name: 'cards' as const, data: d })),
               ...txWrites(data.transactions),
             ],
           }),
@@ -650,7 +707,8 @@ export const useFinanceStore = create<FinanceState>()(
       // v7: subcategorias da casa (água, gás, condomínio, IPTU, manutenção).
       // v8: financiamento do imóvel e compras da casa.
       // v9: metas (caixinhas).
-      version: 9,
+      // v10: cartões de crédito.
+      version: 10,
       migrate: (persisted, version) => {
         let state = persisted as FinanceData
         if (version < 2) {
@@ -682,11 +740,12 @@ export const useFinanceStore = create<FinanceState>()(
           state = { ...state, subcategories: [...state.subcategories, ...missing.subcategories] }
         }
         if (version < 9) state = { ...state, goals: [] }
+        if (version < 10) state = { ...state, cards: [] }
         return state
       },
       // Logado, o Firestore é a fonte; o navegador só guarda o modo sem login.
       storage: localOnlyStorage,
-      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance, goals }) => ({
+      partialize: ({ categories, subcategories, transactions, installments, recurringCosts, debts, vehicles, maintenance, goals, cards }) => ({
         categories,
         subcategories,
         transactions,
@@ -696,6 +755,7 @@ export const useFinanceStore = create<FinanceState>()(
         vehicles,
         maintenance,
         goals,
+        cards,
       }),
     },
   ),

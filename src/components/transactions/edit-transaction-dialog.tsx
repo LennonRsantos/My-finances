@@ -10,6 +10,7 @@ import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-
 import { SharedBillDialog } from '@/components/shared/shared-ui'
 import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
 import { LinkFields } from '@/components/transactions/link-fields'
+import { CardSelect } from '@/components/cards/card-select'
 import { useAreaCategories } from '@/hooks/use-areas'
 import { costKindOf, currentLink, linkPayload, type LinkTarget } from '@/lib/areas'
 import { Button } from '@/components/ui/button'
@@ -46,11 +47,12 @@ const schema = z.object({
 type Values = z.infer<typeof schema>
 
 function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone: () => void }) {
-  const { categories, subcategories, vehicles, updateTransaction, deleteTransactionScoped } = useFinanceStore(
+  const { categories, subcategories, vehicles, cards, updateTransaction, deleteTransactionScoped } = useFinanceStore(
     useShallow((s) => ({
       categories: s.categories,
       subcategories: s.subcategories,
       vehicles: s.vehicles,
+      cards: s.cards,
       updateTransaction: s.updateTransaction,
       deleteTransactionScoped: s.deleteTransactionScoped,
     })),
@@ -62,6 +64,8 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const [linkVehicle, setLinkVehicle] = useState<string | null>(t.vehicleId ?? null)
   const autoKind = t.recurringCostId || t.installment ? 'fixo' : 'variavel'
   const [kind, setKind] = useState(() => costKindOf(t))
+  const cardList = cards.filter((c) => c.active || c.id === t.cardId)
+  const [cardSel, setCardSel] = useState<string | null>(() => t.cardId ?? null)
   const inSeries = !!(t.installment || t.recurringCostId)
   // Parcelamento que na verdade é conta fixa (ex.: aluguel dividido em 12x).
   const seriesId = t.installment?.installmentId
@@ -97,6 +101,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   })
 
   const categoryId = useWatch({ control, name: 'categoryId' })
+  const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
   const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
   const payTo = payToRaw.trim()
   const [payLink, setPayLink] = useState<PayLink | null>(() => payLinkOf(t))
@@ -123,6 +128,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         payToUid: !isIncome && v.payTo && payLink ? payLink.uid : null,
         payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
         notes: v.notes || undefined,
+        cardId: !isIncome && v.paymentMethod === 'cartao_credito' ? cardSel : null,
         ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
       },
       scope,
@@ -309,6 +315,10 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
               </div>
             )}
           </div>
+
+          {!isIncome && paymentMethodValue === 'cartao_credito' && cardList.length > 0 && (
+            <CardSelect cards={cardList} value={cardSel} onChange={setCardSel} />
+          )}
 
           {!isIncome && !t.fuel && (
             <LinkFields

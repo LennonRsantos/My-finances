@@ -101,9 +101,9 @@ function MoneyField({ value, onChange, id, label }: { value: number; onChange: (
 
 function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: 'income' | 'expense' }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className={cn('text-lg font-semibold', tone === 'income' && 'text-income', tone === 'expense' && 'text-expense')}>
+      <span className={cn('truncate text-base font-semibold tabular-nums sm:text-lg', tone === 'income' && 'text-income', tone === 'expense' && 'text-expense')}>
         {value}
       </span>
     </div>
@@ -158,7 +158,7 @@ function DiagnosisCard({ d, health }: { d: Diagnosis; health: Exclude<HealthLeve
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="Renda média" value={formatMoney(d.income)} tone="income" />
           <Stat label="Gastos médios" value={formatMoney(d.expenses)} tone="expense" />
           <Stat label="Contas atrasadas" value={formatMoney(d.overdue)} tone={d.overdue > 0 ? 'expense' : undefined} />

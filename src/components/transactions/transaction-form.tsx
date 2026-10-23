@@ -16,6 +16,7 @@ import { cn, createId } from '@/lib/utils'
 import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
 import { PayToField, type PayLink } from '@/components/shared/pay-to-field'
 import { LinkFields } from '@/components/transactions/link-fields'
+import { CardSelect } from '@/components/cards/card-select'
 import { compactLink, defaultLink, linkPayload, type LinkTarget } from '@/lib/areas'
 import { useAreaCategories } from '@/hooks/use-areas'
 import type { CostKind } from '@/types/finance'
@@ -66,10 +67,11 @@ interface Props {
 }
 
 export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }: Props) {
-  const { categories, subcategories, transactions, vehicles, addTransaction, addInstallmentPurchase, addRecurringCost } = useFinanceStore(
+  const { categories, subcategories, transactions, vehicles, cards, addTransaction, addInstallmentPurchase, addRecurringCost } = useFinanceStore(
     useShallow((s) => ({
       transactions: s.transactions,
       vehicles: s.vehicles,
+      cards: s.cards,
       categories: s.categories,
       subcategories: s.subcategories,
       addTransaction: s.addTransaction,
@@ -122,6 +124,13 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
   const vehicleId = linkTarget === 'veiculo' && activeVehicles.length ? (pickedVehicle ?? activeVehicles[0]!.id) : null
   const autoKind: CostKind = isRecurring || isInstallment ? 'fixo' : 'variavel'
   const costKind = kindPick ?? autoKind
+  // Cartão de crédito: com um cartão só, ele já vem escolhido.
+  const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
+  const activeCards = cards.filter((c) => c.active)
+  const [pickedCard, setPickedCard] = useState<string | null | undefined>(undefined)
+  const cardId =
+    type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length ? (pickedCard === undefined ? activeCards[0]!.id : pickedCard) : null
+  const withCard = cardId ? { cardId } : {}
 
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
   const ongoing = isInstallment && installmentMode === 'andamento'
@@ -252,6 +261,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         payTo,
         ...payTarget,
         ...linked,
+        ...withCard,
         createdAt: new Date().toISOString(),
       }
       const rc: RecurringCost =
@@ -278,6 +288,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         payTo,
         ...payTarget,
         ...linked,
+        ...withCard,
         notes: v.notes || undefined,
       })
       onSuccess?.(`${v.installments - startAt + 1} parcelas de "${v.description}" lançadas`)
@@ -298,6 +309,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         payTo,
         ...payTarget,
         ...linked,
+        ...withCard,
         notes: v.notes || undefined,
         createdAt: new Date().toISOString(),
       }
@@ -308,6 +320,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     setPickedVehicle(undefined)
     setLinkPick(null)
     setKindPick(null)
+    setPickedCard(undefined)
     setPayLink(null)
   }
 
@@ -542,6 +555,10 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
             </div>
           )}
         </div>
+
+        {type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length > 0 && (
+          <CardSelect cards={activeCards} value={cardId} onChange={setPickedCard} />
+        )}
 
         {/* Para quem enviar (só despesa) */}
         {type === 'despesa' && (

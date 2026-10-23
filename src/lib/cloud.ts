@@ -11,6 +11,7 @@
  *   users/{uid}/vehicles/{id}        Vehicle
  *   users/{uid}/maintenance/{id}     MaintenanceReminder
  *   users/{uid}/goals/{id}           Goal
+ *   users/{uid}/cards/{id}           CreditCard
  */
 import {
   collection,
@@ -27,7 +28,7 @@ import {
   type WriteBatch,
 } from 'firebase/firestore'
 import type { CutPlan } from './recovery'
-import type { Category, Cents, Debt, DebtStrategy, Goal, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
+import type { Category, Cents, CreditCard, Debt, DebtStrategy, Goal, Installment, MaintenanceReminder, Vehicle, RecurringCost, Subcategory, Transaction, UserSettings } from '@/types/finance'
 import { DEFAULT_CATEGORIES_VERSION, missingDefaults } from '@/data/mock'
 import { getFirebase } from './firebase'
 
@@ -43,6 +44,7 @@ export interface Collections {
   vehicles: Vehicle
   maintenance: MaintenanceReminder
   goals: Goal
+  cards: CreditCard
 }
 export type CollectionName = keyof Collections
 
@@ -125,6 +127,7 @@ export interface LocalSnapshot {
   vehicles: Vehicle[]
   maintenance: MaintenanceReminder[]
   goals: Goal[]
+  cards: CreditCard[]
 }
 
 /**
@@ -145,6 +148,7 @@ export async function seedUserIfNew(uid: string, local: LocalSnapshot): Promise<
     ...local.vehicles.map((data) => ({ name: 'vehicles' as const, data })),
     ...local.maintenance.map((data) => ({ name: 'maintenance' as const, data })),
     ...local.goals.map((data) => ({ name: 'goals' as const, data })),
+    ...local.cards.map((data) => ({ name: 'cards' as const, data })),
   ]
   await inBatches(items, (batch, { name, data }) => batch.set(itemDoc(uid, name, data.id), data))
   // Documento do usuário por último: só marca como criado depois dos dados.
@@ -199,7 +203,7 @@ export function deleteDocs(uid: string, refs: DocRef[]) {
   return inBatches(refs, (batch, { name, id }) => batch.delete(itemDoc(uid, name, id)))
 }
 
-const ALL_COLLECTIONS: CollectionName[] = ['transactions', 'installments', 'recurringCosts', 'categories', 'subcategories', 'debts', 'vehicles', 'maintenance', 'goals']
+const ALL_COLLECTIONS: CollectionName[] = ['transactions', 'installments', 'recurringCosts', 'categories', 'subcategories', 'debts', 'vehicles', 'maintenance', 'goals', 'cards']
 
 /** Exclusão de conta: apaga todas as coleções do usuário e o documento dele. */
 export async function deleteAllUserData(uid: string) {
