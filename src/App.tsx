@@ -23,6 +23,7 @@ const AuthActionScreen = lazy(() => import('@/components/auth/auth-action-screen
  */
 const loaders: Record<View, () => Promise<{ default: ComponentType }>> = {
   dashboard: () => import('@/pages/dashboard-page').then((m) => ({ default: m.DashboardPage })),
+  metas: () => import('@/pages/goals-page').then((m) => ({ default: m.GoalsPage })),
   lancamentos: () => import('@/pages/transactions-page').then((m) => ({ default: m.TransactionsPage })),
   calendario: () => import('@/pages/calendar-page').then((m) => ({ default: m.CalendarPage })),
   casa: () => import('@/pages/home-page').then((m) => ({ default: m.HomePage })),
@@ -35,6 +36,7 @@ const loaders: Record<View, () => Promise<{ default: ComponentType }>> = {
 
 const PAGES: Record<View, ComponentType> = {
   dashboard: lazy(loaders.dashboard),
+  metas: lazy(loaders.metas),
   lancamentos: lazy(loaders.lancamentos),
   calendario: lazy(loaders.calendario),
   casa: lazy(loaders.casa),

@@ -8,15 +8,21 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass } from '@/components/ui/form-kit'
 import { Input, Label } from '@/components/ui/input'
+import { Switch } from '@/components/ui/misc'
+import { useGoalPlan } from '@/hooks/use-goal-plan'
 import { formatDateShort, todayISO } from '@/lib/dates'
 import { cents, date, money, nowISO, optionalMoney } from '@/lib/form-fields'
 import { goalProgress } from '@/lib/goals'
 import { formatMoney, fromCents } from '@/lib/money'
+import { ASSET_LABELS, autoTargetFor, KIND_LABELS, kindOf, type PlanTargets } from '@/lib/plan'
 import { cn, createId } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
-import type { Goal, ISODate } from '@/types/finance'
+import { GOAL_KINDS, type Goal, type GoalKind, type GoalPlan, type ISODate } from '@/types/finance'
 
-export type GoalDialogState = { kind: 'goal'; goal?: Goal } | { kind: 'deposit'; goal: Goal } | null
+/** Valores sugeridos ao criar pela aba Metas (ex.: "Criar reserva"). */
+export type GoalPreset = Partial<Pick<Goal, 'name' | 'kind' | 'target' | 'autoTarget' | 'asset'>>
+
+export type GoalDialogState = { kind: 'goal'; goal?: Goal; preset?: GoalPreset } | { kind: 'deposit'; goal: Goal } | null
 
 const moneyText = (c: number) => fromCents(c).toFixed(2).replace('.', ',')
 const optionalDate = z.string().refine((v) => v === '' || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Data inválida')
@@ -25,25 +31,70 @@ const optionalDate = z.string().refine((v) => v === '' || /^\d{4}-\d{2}-\d{2}$/.
 // Meta
 // ---------------------------------------------------------------------------
 
+const ASSETS = ['renda_fixa', 'renda_variavel', 'nenhum'] as const
+
+/** Nome que entra sozinho ao escolher o tipo (só se o campo estiver vazio ou com o nome de outro tipo). */
+const KIND_NAMES: Partial<Record<GoalKind, string>> = {
+  reserva: 'Reserva de emergência',
+  liberdade: 'Liberdade financeira',
+  anual: 'Despesas anuais',
+}
+
 const goalSchema = z.object({
   name: z.string().trim().min(2, 'Dê um nome').max(40, 'Máximo de 40 caracteres'),
+  kind: z.enum(GOAL_KINDS),
   target: money('Informe quanto quer juntar'),
+  autoTarget: z.boolean(),
+  asset: z.enum(ASSETS),
   deadline: optionalDate,
   saved: optionalMoney,
 })
 
-function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
+/** De onde vem o alvo calculado, para mostrar a conta. */
+function formulaHint(kind: GoalKind, t: PlanTargets, plan: GoalPlan) {
+  if (kind === 'reserva')
+    return `${formatMoney(t.reserveMonthly)} de ${plan.reserveBase === 'renda' || t.living === 0 ? 'renda' : 'custo de vida'} × ${plan.reserveMonths} meses`
+  return `${formatMoney(t.freedomIncome)} por mês × ${plan.freedomMultiplier}`
+}
+
+function GoalForm({ goal, preset, onDone }: { goal?: Goal; preset?: GoalPreset; onDone: () => void }) {
   const { saveGoal, removeGoal, removeGoalDeposit } = useFinanceStore(
     useShallow((s) => ({ saveGoal: s.saveGoal, removeGoal: s.removeGoal, removeGoalDeposit: s.removeGoalDeposit })),
   )
   const live = useFinanceStore((s) => (goal ? s.goals.find((g) => g.id === goal.id) : undefined)) ?? goal
+  const { plan, targets } = useGoalPlan()
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const { register, handleSubmit, control, formState } = useForm({
+  const initial = goal ?? preset
+  const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(goalSchema),
-    defaultValues: { name: goal?.name ?? '', target: goal ? moneyText(goal.target) : '', deadline: goal?.deadline ?? '', saved: '' },
+    defaultValues: {
+      name: initial?.name ?? '',
+      kind: initial?.kind ?? 'livre',
+      target: initial?.target ? moneyText(initial.target) : '',
+      autoTarget: !!initial?.autoTarget,
+      asset: (initial?.asset ?? 'nenhum') as (typeof ASSETS)[number],
+      deadline: goal?.deadline ?? '',
+      saved: '',
+    },
   })
-  const [target, deadline, saved] = useWatch({ control, name: ['target', 'deadline', 'saved'] })
+  const [kind, target, autoTarget, asset, deadline, saved] = useWatch({ control, name: ['kind', 'target', 'autoTarget', 'asset', 'deadline', 'saved'] })
   const e = formState.errors
+  const auto = autoTargetFor(kind, targets)
+  /** Alvo vem do plano: a caixa só mostra o valor. */
+  const locked = autoTarget && auto !== null
+
+  const changeKind = (next: GoalKind) => {
+    const name = getValues('name').trim()
+    if (!name || name === KIND_NAMES[kind]) setValue('name', KIND_NAMES[next] ?? '')
+    const nextAuto = autoTargetFor(next, targets)
+    // Meta nova de reserva/liberdade já nasce com o alvo do plano.
+    const useAuto = nextAuto !== null && (goal ? autoTarget : true)
+    setValue('autoTarget', useAuto)
+    if (useAuto) setValue('target', moneyText(nextAuto), { shouldValidate: true })
+    if (next === 'reserva' && getValues('asset') === 'nenhum') setValue('asset', 'renda_fixa')
+    setValue('kind', next)
+  }
+
   // Prévia ao vivo de quanto guardar por mês.
   const preview =
     cents(target) > 0
@@ -66,25 +117,52 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
       className={formClass}
       onSubmit={handleSubmit((v) => {
         const first = !goal && v.saved && cents(v.saved) > 0 ? [{ id: createId(), date: todayISO(), amount: cents(v.saved), initial: true }] : []
+        const useAuto = v.autoTarget && autoTargetFor(v.kind, targets) !== null
         saveGoal({
           id: goal?.id ?? createId(),
           name: v.name,
-          target: cents(v.target),
+          target: useAuto ? autoTargetFor(v.kind, targets)! : cents(v.target),
           deadline: v.deadline ? (v.deadline as ISODate) : null,
           deposits: live?.deposits ?? first,
+          kind: v.kind,
+          asset: v.asset === 'nenhum' ? null : v.asset,
+          autoTarget: useAuto,
           createdAt: goal?.createdAt ?? nowISO(),
         })
         onDone()
       })}
     >
       <div className={bodyClass}>
+        <div className="flex flex-col gap-2">
+          <Label>Tipo</Label>
+          <Choices label="Tipo" value={kind} onChange={changeKind} options={GOAL_KINDS.map((k) => ({ value: k, label: KIND_LABELS[k] }))} />
+        </div>
         <Field id="g-name" label="Para quê" error={e.name?.message}>
-          <Input id="g-name" placeholder="Ex.: Viagem, reserva de emergência" aria-invalid={!!e.name} {...register('name')} />
+          <Input id="g-name" placeholder="Ex.: Viagem, troca do carro" aria-invalid={!!e.name} {...register('name')} />
         </Field>
+        {(kind === 'reserva' || kind === 'liberdade') && (
+          <label className="flex items-center justify-between gap-3">
+            <span className="flex flex-col">
+              <span className="text-sm font-medium">Calcular pela renda</span>
+              <span className="text-xs text-muted-foreground">
+                {auto ? `${formulaHint(kind, targets, plan)}. Atualiza sozinho.` : 'Lance sua renda ou informe no plano para calcular.'}
+              </span>
+            </span>
+            <Switch
+              checked={locked}
+              disabled={auto === null}
+              onCheckedChange={(on) => {
+                setValue('autoTarget', on)
+                if (on && auto) setValue('target', moneyText(auto), { shouldValidate: true })
+              }}
+              aria-label="Calcular pela renda"
+            />
+          </label>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field id="g-target" label="Quanto juntar" error={e.target?.message}>
-            <Affix before="R$">
-              <Input id="g-target" inputMode="decimal" className="pl-10" aria-invalid={!!e.target} {...register('target')} />
+            <Affix before="R$" calc={!locked}>
+              <Input id="g-target" inputMode="decimal" className={cn('pl-10', locked && 'bg-muted')} readOnly={locked} aria-invalid={!!e.target} {...register('target')} />
             </Affix>
           </Field>
           <Field id="g-deadline" label="Até (opcional)" error={e.deadline?.message}>
@@ -97,6 +175,18 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
               <Input id="g-saved" inputMode="decimal" className="pl-10" aria-invalid={!!e.saved} {...register('saved')} />
             </Affix>
           </Field>
+        )}
+        {kind !== 'anual' && (
+          <div className="flex flex-col gap-2">
+            <Label>Onde está aplicado</Label>
+            <Choices
+              label="Onde está aplicado"
+              value={asset}
+              onChange={(v) => setValue('asset', v)}
+              options={ASSETS.map((a) => ({ value: a, label: a === 'nenhum' ? 'Não sei' : ASSET_LABELS[a] }))}
+            />
+            {kind === 'reserva' && <p className="text-xs text-muted-foreground">Reserva pede liquidez diária e baixo risco: Tesouro Selic ou CDB 100% do CDI.</p>}
+          </div>
         )}
         {preview && (
           <p role="status" className="rounded-xl bg-info-soft px-3 py-2 text-sm text-info">
@@ -233,7 +323,11 @@ function DepositForm({ goal, onDone }: { goal: Goal; onDone: () => void }) {
 
 export function GoalDialogs({ state, onClose }: { state: GoalDialogState; onClose: () => void }) {
   const title = !state ? '' : state.kind === 'goal' ? (state.goal ? 'Editar meta' : 'Nova meta') : state.goal.name
-  const description = !state ? '' : state.kind === 'goal' ? 'Um objetivo para juntar dinheiro.' : 'Dinheiro separado para esta meta.'
+  const description = !state
+    ? ''
+    : state.kind === 'goal'
+      ? 'Um objetivo para juntar dinheiro.'
+      : `${kindOf(state.goal) === 'livre' ? 'Dinheiro separado para esta meta' : KIND_LABELS[kindOf(state.goal)]}.`
   return (
     <Dialog open={!!state} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
@@ -241,7 +335,7 @@ export function GoalDialogs({ state, onClose }: { state: GoalDialogState; onClos
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {state?.kind === 'goal' && <GoalForm key={state.goal?.id ?? 'new'} goal={state.goal} onDone={onClose} />}
+        {state?.kind === 'goal' && <GoalForm key={state.goal?.id ?? 'new'} goal={state.goal} preset={state.preset} onDone={onClose} />}
         {state?.kind === 'deposit' && <DepositForm key={state.goal.id} goal={state.goal} onDone={onClose} />}
       </DialogContent>
     </Dialog>

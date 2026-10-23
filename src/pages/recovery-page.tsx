@@ -23,7 +23,7 @@ import { Affix } from '@/components/ui/form-kit'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge, EmptyState, Switch, type Tone } from '@/components/ui/misc'
-import { currentYearMonth, formatMonthLabel, todayISO, yearMonthToDate } from '@/lib/dates'
+import { currentYearMonth, durationLabel, formatMonthLabel, todayISO, yearMonthToDate } from '@/lib/dates'
 import { categoryIconMap } from '@/lib/icons'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import {
@@ -59,13 +59,6 @@ import { PageHeader } from '@/components/layout/page-header'
 
 const monthShort = (m: YearMonth) => format(yearMonthToDate(m), 'MMM/yy', { locale: ptBR })
 const pct = (v: number) => `${Math.round(v * 100)}%`
-
-const durationLabel = (months: number) => {
-  if (months < 12) return `${months} ${months === 1 ? 'mês' : 'meses'}`
-  const y = Math.floor(months / 12)
-  const m = months % 12
-  return `${y} ${y === 1 ? 'ano' : 'anos'}${m ? ` e ${m} ${m === 1 ? 'mês' : 'meses'}` : ''}`
-}
 
 const groupColor: Record<SpendingGroup, string> = {
   essencial: 'var(--info)',

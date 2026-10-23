@@ -1,16 +1,15 @@
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { PiggyBank, Plus } from 'lucide-react'
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
-import { parseDate, todayISO } from '@/lib/dates'
+import { parseDate } from '@/lib/dates'
 import { goalProgress, type GoalProgress, type GoalStatus } from '@/lib/goals'
 import { formatMoney } from '@/lib/money'
-import { useFinanceStore } from '@/store/finance-store'
-import type { Goal } from '@/types/finance'
-import { GoalDialogs, type GoalDialogState } from './goal-dialogs'
+import { KIND_LABELS, kindOf } from '@/lib/plan'
+import type { Goal, ISODate } from '@/types/finance'
+import type { GoalDialogState } from './goal-dialogs'
 
 const STATUS: Record<GoalStatus, { label: string; tone: Tone } | null> = {
   concluida: { label: 'Concluída', tone: 'income' },
@@ -34,11 +33,8 @@ function hint(g: Goal, p: GoalProgress) {
   return `Faltam ${formatMoney(p.remaining)}`
 }
 
-/** Metas de economia: progresso e quanto guardar por mês para chegar no prazo. */
-export function GoalsCard() {
-  const goals = useFinanceStore((s) => s.goals)
-  const [dialog, setDialog] = useState<GoalDialogState>(null)
-  const today = todayISO()
+/** Caixinhas: progresso e quanto guardar por mês para chegar no prazo. */
+export function GoalsList({ goals, today, onOpen }: { goals: Goal[]; today: ISODate; onOpen: (s: GoalDialogState) => void }) {
   const rows = goals
     .map((g) => ({ g, p: goalProgress(g, today) }))
     // Concluídas por último; depois, quem vence antes.
@@ -51,12 +47,12 @@ export function GoalsCard() {
         <div className="flex flex-col gap-1">
           <CardTitle className="flex items-center gap-2">
             <PiggyBank className="size-4" />
-            Metas
+            Caixinhas
           </CardTitle>
           <CardDescription>{monthly > 0 ? `Para todas no prazo: ${formatMoney(monthly)} por mês.` : 'Dinheiro separado para seus objetivos.'}</CardDescription>
         </div>
         {rows.length > 0 && (
-          <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'goal' })}>
+          <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'goal' })}>
             <Plus />
             Meta
           </Button>
@@ -66,11 +62,11 @@ export function GoalsCard() {
         {rows.length === 0 ? (
           <EmptyState
             icon={PiggyBank}
-            title="Nenhuma meta ainda"
+            title="Nenhuma caixinha ainda"
             description="Viagem, reserva de emergência, troca do carro: diga quanto e até quando, e o app mostra quanto guardar por mês."
             className="py-6"
             action={
-              <Button size="sm" onClick={() => setDialog({ kind: 'goal' })}>
+              <Button size="sm" onClick={() => onOpen({ kind: 'goal' })}>
                 <Plus />
                 Criar meta
               </Button>
@@ -80,17 +76,19 @@ export function GoalsCard() {
           <ul className="flex flex-col divide-y">
             {rows.map(({ g, p }) => {
               const status = STATUS[p.status]
+              const kind = kindOf(g)
               return (
                 <li key={g.id} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
                   <div className="flex items-start gap-3">
                     <button
                       type="button"
-                      onClick={() => setDialog({ kind: 'goal', goal: g })}
+                      onClick={() => onOpen({ kind: 'goal', goal: g })}
                       aria-label={`Editar meta ${g.name}`}
                       className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">{g.name}</span>
+                        {kind !== 'livre' && g.name !== KIND_LABELS[kind] && <Badge tone="info">{KIND_LABELS[kind]}</Badge>}
                         {status && <Badge tone={status.tone}>{status.label}</Badge>}
                       </span>
                       <span className="block text-sm tabular-nums">
@@ -99,7 +97,7 @@ export function GoalsCard() {
                       </span>
                     </button>
                     {p.status !== 'concluida' && (
-                      <Button size="sm" variant="outline" onClick={() => setDialog({ kind: 'deposit', goal: g })}>
+                      <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'deposit', goal: g })}>
                         Guardar
                       </Button>
                     )}
@@ -112,7 +110,6 @@ export function GoalsCard() {
           </ul>
         )}
       </CardContent>
-      <GoalDialogs state={dialog} onClose={() => setDialog(null)} />
     </Card>
   )
 }

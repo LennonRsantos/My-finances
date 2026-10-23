@@ -383,6 +383,16 @@ export interface GoalDeposit {
   initial?: boolean
 }
 
+/**
+ * Para que serve a caixinha. Reserva e liberdade contam como investimento no
+ * plano do mês; as outras, como metas de curto prazo.
+ */
+export const GOAL_KINDS = ['reserva', 'liberdade', 'curto_prazo', 'anual', 'livre'] as const
+export type GoalKind = (typeof GOAL_KINDS)[number]
+
+/** Onde o dinheiro da caixinha está aplicado. */
+export type GoalAsset = 'renda_fixa' | 'renda_variavel'
+
 export interface Goal {
   id: ID
   name: string
@@ -390,7 +400,37 @@ export interface Goal {
   /** Até quando juntar; `null` = sem prazo */
   deadline: ISODate | null
   deposits: GoalDeposit[]
+  /** Ausente = `livre` (caixinhas criadas antes dos tipos) */
+  kind?: GoalKind
+  asset?: GoalAsset | null
+  /**
+   * Alvo calculado pelo plano (reserva: custo de vida × meses; liberdade:
+   * renda desejada × multiplicador). `target` guarda o último valor calculado.
+   */
+  autoTarget?: boolean
   createdAt: string
+}
+
+/** Partes da renda no plano do mês (padrão 60/10/20/10). */
+export const BUDGET_SLICES = ['essencial', 'investir', 'lazer', 'curto'] as const
+export type BudgetSlice = (typeof BUDGET_SLICES)[number]
+
+/** Parâmetros da aba Metas. */
+export interface GoalPlan {
+  /** Renda mensal informada; `null` = média das receitas dos últimos 3 meses */
+  income: Cents | null
+  /** % da renda em cada parte (soma 100) */
+  split: Record<BudgetSlice, Percent>
+  /** Meses guardados na reserva de emergência */
+  reserveMonths: number
+  /** Reserva sobre o custo de vida (essenciais + parcelas) ou sobre a renda */
+  reserveBase: 'custo' | 'renda'
+  /** Renda que quer receber sem trabalhar; `null` = a renda base */
+  freedomIncome: Cents | null
+  /** Patrimônio = renda desejada × multiplicador (200 ≈ retirar 0,5% ao mês) */
+  freedomMultiplier: number
+  /** Aumento de renda que quer no ano, em %; `null` = sem meta */
+  incomeGrowth: Percent | null
 }
 
 export const FUEL_LABELS: Record<FuelType, string> = {
@@ -539,6 +579,8 @@ export interface UserSettings {
   savedFilters?: SavedFilters | null
   /** Pessoas cujas contas divididas entram sem pedir aceite */
   autoAcceptFrom?: AutoAcceptPerson[]
+  /** Plano da aba Metas; ausente = padrão (60/10/20/10, reserva de 6 meses, 200x) */
+  goalPlan?: GoalPlan
 }
 
 /**

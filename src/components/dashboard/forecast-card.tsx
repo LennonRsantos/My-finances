@@ -1,9 +1,9 @@
 import { CalendarRange, TriangleAlert } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useGoalPlan } from '@/hooks/use-goal-plan'
 import { currentYearMonth, formatMonthLabel, todayISO } from '@/lib/dates'
 import { forecast, type ForecastMonth } from '@/lib/forecast'
 import { goalProgress } from '@/lib/goals'
@@ -21,7 +21,9 @@ const NEGATIVE = 'var(--expense)'
  * lançado (fixos, parcelas, avulsos). "Com metas" desconta o que guardar por mês.
  */
 export function ForecastCard() {
-  const { transactions, goals } = useFinanceStore(useShallow((s) => ({ transactions: s.transactions, goals: s.goals })))
+  const transactions = useFinanceStore((s) => s.transactions)
+  // Caixinhas com o alvo do plano (reserva e liberdade calculadas pela renda).
+  const { goals } = useGoalPlan()
   const openingBalance = useSettingsStore((s) => s.settings.openingBalance)
   const [withGoals, setWithGoals] = useState(false)
   const today = todayISO()

@@ -1,4 +1,4 @@
-import { BarChart3, CalendarDays, Car, CreditCard, House, LayoutDashboard, Lightbulb, ListOrdered, Settings, type LucideIcon } from 'lucide-react'
+import { BarChart3, CalendarDays, Car, CreditCard, House, LayoutDashboard, Lightbulb, ListOrdered, Settings, Target, type LucideIcon } from 'lucide-react'
 import type { View } from '@/store/ui-store'
 
 export interface NavItem {
@@ -14,6 +14,7 @@ export interface NavItem {
 /** Ordem da barra lateral do computador. */
 export const NAV_ITEMS: NavItem[] = [
   { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, mobile: 'bar', mobileLabel: 'Início' },
+  { view: 'metas', label: 'Metas', icon: Target, mobile: 'more' },
   { view: 'lancamentos', label: 'Lançamentos', icon: ListOrdered, mobile: 'more' },
   { view: 'calendario', label: 'Calendário', icon: CalendarDays, mobile: 'more' },
   { view: 'casa', label: 'Casa', icon: House, mobile: 'bar' },
@@ -28,6 +29,6 @@ export const NAV_ITEMS: NavItem[] = [
 export const BAR_ITEMS = NAV_ITEMS.filter((i) => i.mobile === 'bar')
 
 /** Folha "Mais", na ordem de uso (Lançamentos primeiro); Configurações vem à parte. */
-const MORE_ORDER: View[] = ['lancamentos', 'cartoes', 'calendario', 'relatorios', 'inteligencia']
+const MORE_ORDER: View[] = ['lancamentos', 'metas', 'cartoes', 'calendario', 'relatorios', 'inteligencia']
 export const MORE_ITEMS = MORE_ORDER.map((v) => NAV_ITEMS.find((i) => i.view === v)!)
 export const SETTINGS_ITEM = NAV_ITEMS.find((i) => i.view === 'configuracoes')!

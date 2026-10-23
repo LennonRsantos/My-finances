@@ -66,6 +66,14 @@ export function formatMonthLabel(month: YearMonth, style: 'long' | 'short' = 'lo
   return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
+/** "8 meses", "2 anos e 3 meses". */
+export function durationLabel(months: number): string {
+  if (months < 12) return `${months} ${months === 1 ? 'mês' : 'meses'}`
+  const y = Math.floor(months / 12)
+  const m = months % 12
+  return `${y} ${y === 1 ? 'ano' : 'anos'}${m ? ` e ${m} ${m === 1 ? 'mês' : 'meses'}` : ''}`
+}
+
 /** "05 de mar"; inclui o ano quando difere do ano corrente. */
 export function formatDateShort(date: ISODate): string {
   const d = parseDate(date)
