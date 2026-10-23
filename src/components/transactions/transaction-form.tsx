@@ -128,8 +128,10 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
   const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
   const activeCards = cards.filter((c) => c.active)
   const [pickedCard, setPickedCard] = useState<string | null | undefined>(undefined)
-  const cardId =
-    type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length ? (pickedCard === undefined ? activeCards[0]!.id : pickedCard) : null
+  const usesCard = type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length > 0
+  // Um cartão: vai sozinho. Vários: a pessoa escolhe (obrigatório).
+  const cardId = usesCard ? (pickedCard === undefined ? (activeCards.length === 1 ? activeCards[0]!.id : null) : pickedCard) : null
+  const [cardMissing, setCardMissing] = useState(false)
   const withCard = cardId ? { cardId } : {}
 
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
@@ -234,6 +236,11 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       return
     }
     setSubMissing(false)
+    if (usesCard && activeCards.length > 1 && !cardId) {
+      setCardMissing(true)
+      return
+    }
+    setCardMissing(false)
     if (sharing) return submitShared(v)
     const due = v.dueDate as ISODate
     const totalCents = toCents(v.amount)
@@ -557,7 +564,15 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         </div>
 
         {type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length > 0 && (
-          <CardSelect cards={activeCards} value={cardId} onChange={setPickedCard} />
+          <CardSelect
+            cards={activeCards}
+            value={cardId}
+            onChange={(id) => {
+              setPickedCard(id)
+              setCardMissing(false)
+            }}
+            error={cardMissing ? 'Escolha qual cartão foi usado.' : null}
+          />
         )}
 
         {/* Para quem enviar (só despesa) */}

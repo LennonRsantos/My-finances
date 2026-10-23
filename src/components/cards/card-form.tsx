@@ -28,7 +28,9 @@ const schema = z.object({
 /** Cadastro e edição do cartão: fechamento e vencimento definem em que fatura cai cada compra. */
 export function CardForm({ card, onDone }: { card?: CreditCard; onDone: (saved?: CreditCard) => void }) {
   const { saveCard, removeCard } = useFinanceStore(useShallow((s) => ({ saveCard: s.saveCard, removeCard: s.removeCard })))
-  const [color, setColor] = useState<HexColor>(card?.color ?? CARD_COLORS[0])
+  // Cartão novo: primeira cor ainda não usada, para distinguir dos outros.
+  const usedColors = useFinanceStore(useShallow((s) => s.cards.filter((c) => c.active).map((c) => c.color)))
+  const [color, setColor] = useState<HexColor>(() => card?.color ?? CARD_COLORS.find((c) => !usedColors.includes(c)) ?? CARD_COLORS[0])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const { register, handleSubmit, control, formState } = useForm({
     resolver: zodResolver(schema),

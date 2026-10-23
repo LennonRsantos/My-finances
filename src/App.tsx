@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, type ComponentType } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
 import { AuthGate, LocalModeBanner, SyncErrorBanner } from '@/components/layout/auth-gate'
+import { CardPrompt } from '@/components/cards/card-prompt'
 import { EditTransactionDialog } from '@/components/transactions/edit-transaction-dialog'
 import { TransactionDialog } from '@/components/transactions/transaction-dialog'
 import { Skeleton } from '@/components/ui/misc'
@@ -100,6 +101,7 @@ function App() {
         </Suspense>
         <TransactionDialog />
         <EditTransactionDialog />
+        <CardPrompt />
       </AppShell>
     </AuthGate>
   )

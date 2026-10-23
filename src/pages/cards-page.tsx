@@ -8,24 +8,24 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
-import { currentInvoice, INVOICE_LABEL, invoiceSummary, usedLimit, type InvoiceStatus } from '@/lib/cards'
+import { currentInvoice, INVOICE_LABEL, invoiceSummary, unassignedCardPurchases, usedLimit, type InvoiceStatus } from '@/lib/cards'
 import { formatDateShort, formatMonthLabel, shiftMonth, todayISO } from '@/lib/dates'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
-import { useFinanceStore } from '@/store/finance-store'
+import { baseDescription, useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
-import type { CreditCard, YearMonth } from '@/types/finance'
+import type { CreditCard, Transaction, YearMonth } from '@/types/finance'
 
 const statusTone: Record<InvoiceStatus, Tone> = { aberta: 'info', fechada: 'warning', paga: 'income', atrasada: 'expense', vazia: 'neutral' }
 
 /** Faturas do cartão: mês a mês, com as compras lançadas e o botão de pagar. */
 function InvoiceCard({ card, month, setMonth, onImport }: { card: CreditCard; month: YearMonth; setMonth: (m: YearMonth) => void; onImport: () => void }) {
-  const { transactions, categories, payInvoice } = useFinanceStore(
-    useShallow((s) => ({ transactions: s.transactions, categories: s.categories, payInvoice: s.payInvoice })),
+  const { transactions, categories, cards, payInvoice } = useFinanceStore(
+    useShallow((s) => ({ transactions: s.transactions, categories: s.categories, cards: s.cards, payInvoice: s.payInvoice })),
   )
   const edit = useUIStore((s) => s.setEditingTransaction)
   const today = todayISO()
-  const inv = invoiceSummary(transactions, card, month, today)
+  const inv = invoiceSummary(transactions, card, month, today, cards)
   const [confirmPay, setConfirmPay] = useState(false)
   const catName = (id: string) => categories.find((c) => c.id === id)?.name ?? 'Outros'
 
@@ -133,6 +133,86 @@ function InvoiceCard({ card, month, setMonth, onImport }: { card: CreditCard; mo
   )
 }
 
+/** Com vários cartões: compras no cartão que ainda não dizem qual. Atribuir uma a uma ou todas de uma vez. */
+function UnassignedCard({ cards }: { cards: CreditCard[] }) {
+  const { transactions, assignCard } = useFinanceStore(useShallow((s) => ({ transactions: s.transactions, assignCard: s.assignCard })))
+  const [open, setOpen] = useState(false)
+  const items = unassignedCardPurchases(transactions, cards)
+  if (!items.length) return null
+  // Uma linha por compra: parcelas e meses do mesmo fixo andam juntos (atribuir vale para a série).
+  const today = todayISO()
+  const groups = new Map<string, Transaction[]>()
+  for (const t of items) {
+    const key = t.installment?.installmentId ?? t.recurringCostId ?? t.id
+    groups.set(key, [...(groups.get(key) ?? []), t])
+  }
+  const rows = [...groups.values()]
+    .map((list) => {
+      // Representante: a mais recente até hoje; se todas forem futuras, a próxima.
+      const past = list.filter((t) => t.dueDate <= today).sort((a, b) => b.dueDate.localeCompare(a.dueDate))
+      const rep = past[0] ?? [...list].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]!
+      return { rep, ids: list.map((t) => t.id), count: list.length }
+    })
+    // Já feitas primeiro (mais recentes no topo); depois as futuras, da mais próxima.
+    .sort((a, b) => {
+      const pa = a.rep.dueDate <= today
+      const pb = b.rep.dueDate <= today
+      if (pa !== pb) return pa ? -1 : 1
+      return pa ? b.rep.dueDate.localeCompare(a.rep.dueDate) : a.rep.dueDate.localeCompare(b.rep.dueDate)
+    })
+  const list = open ? rows : rows.slice(0, 3)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Compras no cartão sem cartão definido ({rows.length})</CardTitle>
+        <CardDescription>Escolha em qual cartão cada uma foi feita para entrar na fatura certa.</CardDescription>
+        <div className="flex flex-wrap gap-2 pt-1">
+          {cards.map((c) => (
+            <Button key={c.id} size="sm" variant="outline" onClick={() => assignCard(items.map((t) => t.id), c.id)}>
+              <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
+              Todas para {c.name}
+            </Button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <ul className="divide-y">
+          {list.map(({ rep: t, ids, count }) => (
+            <li key={t.id} className="flex flex-col gap-2 py-2.5">
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-medium">{count > 1 ? baseDescription(t) : t.description}</span>
+                <span className="shrink-0 font-semibold tabular-nums">{formatMoney(t.amount)}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-xs text-muted-foreground">
+                  {formatDateShort(t.dueDate)}
+                  {count > 1 && ` · ${count} ${t.installment ? 'parcelas' : 'meses'}`} ·
+                </span>
+                {cards.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => assignCard(ids, c.id)}
+                    className="flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="size-2 rounded-full" style={{ background: c.color }} aria-hidden />
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+        {rows.length > 3 && (
+          <Button variant="ghost" size="sm" className="mt-1 w-full" onClick={() => setOpen((v) => !v)}>
+            {open ? 'Mostrar menos' : `Ver todas (${rows.length})`}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function CardsPage() {
   const { cards, transactions } = useFinanceStore(useShallow((s) => ({ cards: s.cards, transactions: s.transactions })))
   const active = useMemo(() => cards.filter((c) => c.active).sort((a, b) => a.createdAt.localeCompare(b.createdAt)), [cards])
@@ -143,7 +223,7 @@ export function CardsPage() {
   const today = todayISO()
   const [months, setMonths] = useState<Record<string, YearMonth>>({})
   const month: YearMonth | null = card ? (months[card.id] ?? currentInvoice(card, today)) : null
-  const used = card ? usedLimit(transactions, card.id) : 0
+  const used = card ? usedLimit(transactions, card.id, cards) : 0
 
   return (
     <>
@@ -225,6 +305,8 @@ export function CardsPage() {
                 Importar fatura do banco
               </Button>
             </Card>
+
+            <UnassignedCard cards={active} />
 
             <InvoiceCard card={card} month={month!} setMonth={(m) => setMonths((s) => ({ ...s, [card.id]: m }))} onImport={() => setImporting(true)} />
           </>

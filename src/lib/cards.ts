@@ -8,9 +8,31 @@ import { addDaysISO, dateInMonth, monthOf, shiftMonth } from './dates'
 
 export const CARD_COLORS = ['#7c3aed', '#0f766e', '#b91c1c', '#1d4ed8', '#c2410c', '#334155'] as const
 
+type CardList = Pick<CreditCard, 'id' | 'active'>[]
+
+/** Compra no cartão de crédito ainda sem cartão escolhido. */
+const cardPurchase = (t: Transaction) => t.type === 'despesa' && t.paymentMethod === 'cartao_credito'
+
+/**
+ * Cartão da compra: o escolhido; sem escolha e com um cartão só, esse cartão
+ * (vale para compras antigas, sem regravar). Com vários, `null` até escolher.
+ */
+export function cardOf(t: Transaction, cards: CardList): string | null {
+  if (t.cardId) return t.cardId
+  if (!cardPurchase(t)) return null
+  const active = cards.filter((c) => c.active)
+  return active.length === 1 ? active[0]!.id : null
+}
+
 /** Compras do cartão (despesas). */
-export const cardExpenses = (transactions: Transaction[], cardId: string) =>
-  transactions.filter((t) => t.cardId === cardId && t.type === 'despesa')
+export const cardExpenses = (transactions: Transaction[], cardId: string, cards: CardList) =>
+  transactions.filter((t) => t.type === 'despesa' && cardOf(t, cards) === cardId)
+
+/** Com vários cartões: compras no cartão de crédito que ainda não dizem qual (fora as de conta dividida). */
+export const unassignedCardPurchases = (transactions: Transaction[], cards: CardList) =>
+  cards.filter((c) => c.active).length < 2
+    ? []
+    : transactions.filter((t) => cardPurchase(t) && !t.cardId && !t.sharedBillId).sort((a, b) => b.dueDate.localeCompare(a.dueDate))
 
 /**
  * Fatura de uma compra: até o dia de fechamento entra na fatura do mês;
@@ -41,9 +63,9 @@ export interface InvoiceSummary {
   status: InvoiceStatus
 }
 
-export function invoiceSummary(transactions: Transaction[], card: CreditCard, month: YearMonth, today: ISODate): InvoiceSummary {
+export function invoiceSummary(transactions: Transaction[], card: CreditCard, month: YearMonth, today: ISODate, cards: CardList): InvoiceSummary {
   const { closing, due } = invoiceDates(month, card)
-  const items = cardExpenses(transactions, card.id)
+  const items = cardExpenses(transactions, card.id, cards)
     .filter((t) => invoiceOf(t.dueDate, card) === month)
     .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
   const total = items.reduce((a, t) => a + t.amount, 0)
@@ -58,8 +80,8 @@ export function invoiceSummary(transactions: Transaction[], card: CreditCard, mo
 export const currentInvoice = (card: CreditCard, today: ISODate) => invoiceOf(today, card)
 
 /** Limite já comprometido: compras do cartão ainda não pagas (inclui parcelas futuras). */
-export const usedLimit = (transactions: Transaction[], cardId: string) =>
-  cardExpenses(transactions, cardId)
+export const usedLimit = (transactions: Transaction[], cardId: string, cards: CardList) =>
+  cardExpenses(transactions, cardId, cards)
     .filter((t) => t.status !== 'pago')
     .reduce((a, t) => a + t.amount, 0)
 

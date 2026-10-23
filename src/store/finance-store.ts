@@ -135,6 +135,8 @@ interface FinanceState extends FinanceData {
   removeCard: (id: CreditCard['id']) => void
   /** Marca como pagas as compras ainda abertas desta fatura (não cria outra despesa). */
   payInvoice: (cardId: CreditCard['id'], ids: Transaction['id'][], date: ISODate) => void
+  /** Escolhe o cartão das compras (e do resto da série e do fixo, se ainda sem cartão). */
+  assignCard: (ids: Transaction['id'][], cardId: CreditCard['id']) => void
   /** Grava o extrato revisado de uma vez. */
   importStatement: (lines: StatementImport[]) => void
   /** Cria ou atualiza meta (nome, alvo, prazo; depósitos vão junto). */
@@ -490,8 +492,26 @@ export const useFinanceStore = create<FinanceState>()(
 
         payInvoice: (cardId, ids, date) => {
           const set = new Set(ids)
-          const items = get().transactions.filter((t) => set.has(t.id) && t.cardId === cardId && t.status !== 'pago')
-          if (items.length) commit({ upserts: txWrites(items.map((t) => ({ ...t, status: 'pago' as const, paymentDate: date }))) })
+          const items = get().transactions.filter((t) => set.has(t.id) && t.status !== 'pago')
+          // Compra contada no cartão sem escolha (cartão único) passa a guardar o cartão.
+          if (items.length) commit({ upserts: txWrites(items.map((t) => ({ ...t, cardId: t.cardId ?? cardId, status: 'pago' as const, paymentDate: date }))) })
+        },
+
+        assignCard: (ids, cardId) => {
+          const { transactions, recurringCosts } = get()
+          const chosen = transactions.filter((t) => ids.includes(t.id))
+          const series = new Set(chosen.flatMap((t) => [t.installment?.installmentId, t.recurringCostId].filter((x): x is string => !!x)))
+          const txs = transactions.filter(
+            (t) => ids.includes(t.id) || (!t.cardId && ((t.installment && series.has(t.installment.installmentId)) || (t.recurringCostId && series.has(t.recurringCostId)))),
+          )
+          // Fixo: os próximos meses já nascem com o cartão.
+          const rcs = recurringCosts.filter((r) => series.has(r.id) && !r.cardId)
+          commit({
+            upserts: [
+              ...txWrites(txs.map((t) => ({ ...t, cardId }))),
+              ...rcs.map((r) => ({ name: 'recurringCosts' as const, data: { ...r, cardId } })),
+            ],
+          })
         },
 
         importStatement: (lines) => {

@@ -65,7 +65,8 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const autoKind = t.recurringCostId || t.installment ? 'fixo' : 'variavel'
   const [kind, setKind] = useState(() => costKindOf(t))
   const cardList = cards.filter((c) => c.active || c.id === t.cardId)
-  const [cardSel, setCardSel] = useState<string | null>(() => t.cardId ?? null)
+  const [cardSel, setCardSel] = useState<string | null>(() => t.cardId ?? (cardList.length === 1 ? cardList[0]!.id : null))
+  const [cardMissing, setCardMissing] = useState(false)
   const inSeries = !!(t.installment || t.recurringCostId)
   // Parcelamento que na verdade é conta fixa (ex.: aluguel dividido em 12x).
   const seriesId = t.installment?.installmentId
@@ -112,6 +113,10 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const subs = useMemo(() => subcategories.filter((s) => s.categoryId === categoryId), [subcategories, categoryId])
 
   const onSubmit = (v: Values) => {
+    if (!isIncome && v.paymentMethod === 'cartao_credito' && cardList.length > 1 && !cardSel) {
+      setCardMissing(true)
+      return
+    }
     const dueDate = v.dueDate as ISODate
     updateTransaction(
       t.id,
@@ -317,7 +322,15 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
           </div>
 
           {!isIncome && paymentMethodValue === 'cartao_credito' && cardList.length > 0 && (
-            <CardSelect cards={cardList} value={cardSel} onChange={setCardSel} />
+            <CardSelect
+              cards={cardList}
+              value={cardSel}
+              onChange={(id) => {
+                setCardSel(id)
+                setCardMissing(false)
+              }}
+              error={cardMissing ? 'Escolha qual cartão foi usado.' : null}
+            />
           )}
 
           {!isIncome && !t.fuel && (
