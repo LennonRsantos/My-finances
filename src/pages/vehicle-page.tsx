@@ -251,6 +251,7 @@ function CostsCard({ vehicleId }: { vehicleId: string }) {
         </CardTitle>
         <CardDescription>
           Últimos 12 meses: {formatMoney(summary.total)}, média de {formatMoney(Math.round(summary.total / 12))} por mês.
+          {summary.total > 0 && ` Fixos ${formatMoney(summary.split.fixo)} · variáveis ${formatMoney(summary.split.variavel)}.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">

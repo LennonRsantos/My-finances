@@ -15,6 +15,10 @@ import { MAX_INSTALLMENTS, parseMoneyInput, transactionFormSchema, type Transact
 import { cn, createId } from '@/lib/utils'
 import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
 import { PayToField, type PayLink } from '@/components/shared/pay-to-field'
+import { LinkFields } from '@/components/transactions/link-fields'
+import { compactLink, defaultLink, linkPayload, type LinkTarget } from '@/lib/areas'
+import { useAreaCategories } from '@/hooks/use-areas'
+import type { CostKind } from '@/types/finance'
 import {
   SHARED_FIXED_MONTHS,
   ShareFields,
@@ -103,11 +107,21 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       'frequency',
     ],
   })
-  // Gasto da categoria Veículo pode ser ligado a um veículo (aparece na aba Veículo).
+  // Vínculo com Casa/Veículo: sugerido pela categoria; trocar vale até mudar a categoria.
   const activeVehicles = vehicles.filter((v) => v.active)
+  const { homeCats, vehicleCats } = useAreaCategories()
   const [pickedVehicle, setPickedVehicle] = useState<string | null | undefined>(undefined)
-  const vehicleId =
-    categoryId === VEHICLE_CATEGORY_ID && activeVehicles.length ? (pickedVehicle === undefined ? activeVehicles[0]!.id : pickedVehicle) : null
+  const [linkPick, setLinkPick] = useState<{ categoryId: string; link: LinkTarget } | null>(null)
+  const [kindPick, setKindPick] = useState<CostKind | null>(null)
+  const linkTarget: LinkTarget =
+    type !== 'despesa'
+      ? 'nenhum'
+      : linkPick?.categoryId === categoryId
+        ? linkPick.link
+        : defaultLink(categoryId, homeCats, vehicleCats, activeVehicles.length > 0)
+  const vehicleId = linkTarget === 'veiculo' && activeVehicles.length ? (pickedVehicle ?? activeVehicles[0]!.id) : null
+  const autoKind: CostKind = isRecurring || isInstallment ? 'fixo' : 'variavel'
+  const costKind = kindPick ?? autoKind
 
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
   const ongoing = isInstallment && installmentMode === 'andamento'
@@ -217,6 +231,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     const payTo = v.type === 'despesa' && v.payTo ? v.payTo : null
     const link = payTo ? payLink : null
     const payTarget = { payToUid: link?.uid ?? null, payToHandle: link?.handle ?? null }
+    const linked = compactLink(linkPayload(v.categoryId, linkTarget, vehicleId, costKind, autoKind, homeCats))
 
     if (v.isRecurring) {
       const base = {
@@ -236,7 +251,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         lastGeneratedMonth: null,
         payTo,
         ...payTarget,
-        vehicleId,
+        ...linked,
         createdAt: new Date().toISOString(),
       }
       const rc: RecurringCost =
@@ -262,6 +277,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         firstPaid: v.paid,
         payTo,
         ...payTarget,
+        ...linked,
         notes: v.notes || undefined,
       })
       onSuccess?.(`${v.installments - startAt + 1} parcelas de "${v.description}" lançadas`)
@@ -281,7 +297,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         recurringCostId: null,
         payTo,
         ...payTarget,
-        vehicleId,
+        ...linked,
         notes: v.notes || undefined,
         createdAt: new Date().toISOString(),
       }
@@ -290,6 +306,8 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     }
     reset(defaultValues(v.type))
     setPickedVehicle(undefined)
+    setLinkPick(null)
+    setKindPick(null)
     setPayLink(null)
   }
 
@@ -452,23 +470,17 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           </p>
         )}
 
-        {categoryId === VEHICLE_CATEGORY_ID && activeVehicles.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <Label>Veículo</Label>
-            <Select value={vehicleId ?? 'none'} onValueChange={(v) => setPickedVehicle(v === 'none' ? null : v)}>
-              <SelectTrigger aria-label="Veículo">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Nenhum</SelectItem>
-                {activeVehicles.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    {v.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {type === 'despesa' && (
+          <LinkFields
+            link={linkTarget}
+            onLink={(l) => setLinkPick({ categoryId, link: l })}
+            vehicles={activeVehicles}
+            vehicleId={vehicleId}
+            onVehicle={setPickedVehicle}
+            kind={costKind}
+            onKind={setKindPick}
+            autoKind={autoKind}
+          />
         )}
 
         {/* Data + forma de pagamento (só despesa) */}

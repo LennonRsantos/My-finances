@@ -7,8 +7,7 @@ import type { Category, Cents, ISODate, PaymentMethod, Subcategory, Transaction,
 import { PAYMENT_METHOD_LABELS, STATUS_LABELS } from '@/types/finance'
 import { lastNMonths, monthEnd, monthOf, parseDate, yearMonthToDate } from './dates'
 import { resolveStatus } from './finance'
-import { HOME_CATEGORY_ID } from './home'
-import { VEHICLE_CATEGORY_ID } from './vehicle'
+import { areaOf as areaOfTx, DEFAULT_HOME_CATEGORIES, type Area as LinkArea } from './areas'
 
 export type ReportPeriod = 'mes' | 'ano'
 
@@ -21,8 +20,9 @@ export const previousPeriodEnd = (end: YearMonth, period: ReportPeriod): YearMon
 
 export type Area = 'casa' | 'veiculo' | 'outros'
 
-export const areaOf = (t: Transaction): Area =>
-  t.categoryId === HOME_CATEGORY_ID ? 'casa' : t.categoryId === VEHICLE_CATEGORY_ID || t.vehicleId ? 'veiculo' : 'outros'
+/** Área do lançamento pela regra de vínculo (`lib/areas.ts`); `homeCats` vem das Configurações. */
+const DEFAULT_CATS: ReadonlySet<string> = new Set(DEFAULT_HOME_CATEGORIES)
+export const areaOf = (t: Transaction, homeCats: ReadonlySet<string> = DEFAULT_CATS): Area => areaOfTx(t, homeCats) satisfies LinkArea
 
 export interface Report {
   months: YearMonth[]
@@ -48,7 +48,7 @@ function countDays(months: YearMonth[], today: ISODate): number {
   }, 0)
 }
 
-export function buildReport(transactions: Transaction[], end: YearMonth, period: ReportPeriod, today: ISODate): Report {
+export function buildReport(transactions: Transaction[], end: YearMonth, period: ReportPeriod, today: ISODate, homeCats: ReadonlySet<string> = DEFAULT_CATS): Report {
   const months = periodMonths(end, period)
   const inPeriod = new Set(months)
   const previous = new Set(periodMonths(previousPeriodEnd(end, period), period))
@@ -60,7 +60,7 @@ export function buildReport(transactions: Transaction[], end: YearMonth, period:
   const byCategory = new Map<string, Cents>()
   const byPayment = new Map<PaymentMethod | null, Cents>()
   for (const t of expenses) {
-    byArea[areaOf(t)] += t.amount
+    byArea[areaOf(t, homeCats)] += t.amount
     byCategory.set(t.categoryId, (byCategory.get(t.categoryId) ?? 0) + t.amount)
     byPayment.set(t.paymentMethod, (byPayment.get(t.paymentMethod) ?? 0) + t.amount)
   }
@@ -111,6 +111,7 @@ export function toCSV(
   items: Transaction[],
   lookups: { categories: Category[]; subcategories: Subcategory[]; vehicles: Vehicle[] },
   today: ISODate,
+  homeCats: ReadonlySet<string> = DEFAULT_CATS,
 ): string {
   const cat = new Map(lookups.categories.map((c) => [c.id, c.name]))
   const sub = new Map(lookups.subcategories.map((s) => [s.id, s.name]))
@@ -124,7 +125,7 @@ export function toCSV(
         t.dueDate,
         t.description,
         t.type === 'receita' ? 'Receita' : 'Despesa',
-        t.type === 'despesa' ? areaLabel[areaOf(t)] : '',
+        t.type === 'despesa' ? areaLabel[areaOf(t, homeCats)] : '',
         cat.get(t.categoryId) ?? '',
         (t.subcategoryId && sub.get(t.subcategoryId)) ?? '',
         csvMoney(t.type === 'receita' ? t.amount : -t.amount),

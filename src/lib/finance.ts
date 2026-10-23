@@ -3,6 +3,7 @@ import type {
   Category,
   CategorySpending,
   Cents,
+  CostKind,
   DueAlerts,
   FinancialHealth,
   Installment,
@@ -207,6 +208,9 @@ export interface InstallmentPurchaseInput {
   notes?: string
   /** Financiamento/empréstimo do veículo: as parcelas entram na aba Veículo */
   vehicleId?: string | null
+  /** Vínculo com a Casa e fixo/variável (ver `Transaction`) */
+  homeLink?: boolean | null
+  costKind?: CostKind | null
 }
 
 /**
@@ -261,6 +265,8 @@ export function generateInstallments(input: InstallmentPurchaseInput): {
       payToHandle: input.payToHandle ?? null,
       notes: input.notes,
       vehicleId: input.vehicleId ?? null,
+      ...(input.homeLink != null ? { homeLink: input.homeLink } : {}),
+      ...(input.costKind ? { costKind: input.costKind } : {}),
       createdAt,
     }
   })

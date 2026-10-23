@@ -14,6 +14,7 @@ import { buildReport, toCSV, type Area } from '@/lib/reports'
 import { cn } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
+import { useAreaCategories } from '@/hooks/use-areas'
 import { PAYMENT_METHOD_LABELS } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
 
@@ -43,13 +44,14 @@ export function ReportsPage() {
   const setView = useUIStore((s) => s.setView)
   const [period, setPeriod] = useReportPeriod()
   const today = todayISO()
-  const report = buildReport(transactions, month, period, today)
+  const { homeCats } = useAreaCategories()
+  const report = buildReport(transactions, month, period, today, homeCats)
   const categoryById = new Map(categories.map((c) => [c.id, c]))
   const periodLabel =
     period === 'mes' ? formatMonthLabel(month) : `${formatMonthLabel(report.months[0]!)} a ${formatMonthLabel(month)}`
 
   const exportCSV = () => {
-    const csv = toCSV(report.items, { categories, subcategories, vehicles }, today)
+    const csv = toCSV(report.items, { categories, subcategories, vehicles }, today, homeCats)
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url

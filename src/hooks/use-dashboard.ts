@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useFinanceStore } from '@/store/finance-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useUIStore } from '@/store/ui-store'
+import { useAreaCategories } from './use-areas'
 import {
   computeBudgetUsage,
   computeCategorySpending,
@@ -23,13 +24,14 @@ export function useDashboardData() {
   )
   const { openingBalance, notifications, fixedSeries } = useSettingsStore((s) => s.settings)
   const month = useUIStore((s) => s.selectedMonth)
+  const { homeCats } = useAreaCategories()
 
   return useMemo(() => {
     const today = todayISO()
     const inMonth = transactionsInMonth(transactions, month)
     const expenses = inMonth.filter((t) => t.type === 'despesa')
     const byArea = { casa: 0, veiculo: 0, outros: 0 }
-    for (const t of expenses) byArea[areaOf(t)] += t.amount
+    for (const t of expenses) byArea[areaOf(t, homeCats)] += t.amount
     return {
       month,
       today,
@@ -46,5 +48,5 @@ export function useDashboardData() {
       monthlySeries: computeMonthlySeries(transactions, month, 12),
       payees: computePayeeBalances(transactions, month, today),
     }
-  }, [transactions, categories, month, openingBalance, notifications.dueSoonDays, fixedSeries])
+  }, [transactions, categories, month, openingBalance, notifications.dueSoonDays, fixedSeries, homeCats])
 }

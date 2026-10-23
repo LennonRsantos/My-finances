@@ -9,6 +9,8 @@ import { SHARED_FIXED_MONTHS, ShareFields, fixedShareNote, sendShareInvite, useS
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useAreaCategories } from '@/hooks/use-areas'
 import { todayISO } from '@/lib/dates'
 import { formatMoney } from '@/lib/money'
 import { cents, date, money, nowISO, optionalMoney } from '@/lib/form-fields'
@@ -36,12 +38,17 @@ export type HomeDialogState =
   | { kind: 'purchase' }
   | null
 
-function homeExpense(fields: Pick<Transaction, 'description' | 'amount' | 'subcategoryId' | 'dueDate' | 'paymentMethod'> & { paid: boolean }): Transaction {
-  const { paid, ...rest } = fields
+/** Lançado pela Casa em categoria que não é da casa: fica vinculado à Casa mesmo assim. */
+const homeLinkFor = (categoryId: string, homeCats: ReadonlySet<string>) => (homeCats.has(categoryId) ? {} : { homeLink: true })
+
+function homeExpense(
+  fields: Pick<Transaction, 'description' | 'amount' | 'subcategoryId' | 'dueDate' | 'paymentMethod'> & { paid: boolean; categoryId?: string; homeLink?: boolean },
+): Transaction {
+  const { paid, categoryId = HOME_CATEGORY_ID, ...rest } = fields
   return {
     id: createId(),
     type: 'despesa',
-    categoryId: HOME_CATEGORY_ID,
+    categoryId,
     paymentDate: paid ? fields.dueDate : null,
     status: paid ? 'pago' : 'pendente',
     installment: null,
@@ -70,12 +77,14 @@ function useHomeShare() {
     total: Cents
     installments: number
     due: ISODate
-    subcategoryId: string
+    subcategoryId: string | null
     /** Numeração na série original (ex.: dividir da 11ª de 36) */
     offset?: number
     seriesTotal?: number
     /** Conta fixa: repete todo mês, sem fim */
     recurring?: boolean
+    /** Categoria escolhida no formulário (padrão Moradia) */
+    categoryId?: string
   }) => {
     const result = await sendShareInvite(share, {
       title: bill.title,
@@ -85,8 +94,8 @@ function useHomeShare() {
       installmentTotal: bill.seriesTotal ?? null,
       recurring: bill.recurring ?? false,
       firstDueDate: bill.due,
-      categoryId: HOME_CATEGORY_ID,
-      subcategoryId: bill.subcategoryId,
+      categoryId: bill.categoryId ?? HOME_CATEGORY_ID,
+      subcategoryId: bill.subcategoryId || null,
     })
     if ('error' in result) {
       setShare({ ...share, error: result.error })
@@ -98,24 +107,53 @@ function useHomeShare() {
 }
 
 // ---------------------------------------------------------------------------
+// Categoria (livre; padrão Moradia)
+// ---------------------------------------------------------------------------
+
+/** Categoria do gasto lançado pela Casa. Fora de Moradia ele continua aparecendo aqui. */
+function CategoryField({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const categories = useFinanceStore(useShallow((s) => s.categories.filter((c) => c.type === 'despesa')))
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor="home-cat">Categoria</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger id="home-cat" aria-label="Categoria">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {categories.map((c) => (
+            <SelectItem key={c.id} value={c.id}>
+              {c.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {value !== HOME_CATEGORY_ID && <p className="text-xs text-muted-foreground">Entra nessa categoria em Lançamentos e continua aparecendo na Casa.</p>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Conta da casa
 // ---------------------------------------------------------------------------
 
 const billSchema = z.object({
-  subcategoryId: z.string().min(1, 'Escolha a conta'),
+  categoryId: z.string().min(1),
+  subcategoryId: z.string(),
   description: z.string().trim().min(2, 'Descreva a conta').max(80, 'Máximo de 80 caracteres'),
   amount: money('Informe o valor'),
   date,
   paid: z.boolean(),
   repeat: z.boolean(),
   paymentMethod: z.enum(PAYMENT_METHODS),
-})
+}).refine((v) => v.categoryId !== HOME_CATEGORY_ID || v.subcategoryId !== '', { path: ['subcategoryId'], message: 'Escolha a conta' })
 
 function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; onDone: () => void }) {
   const { subcategories, addTransaction, addRecurringCost } = useFinanceStore(
     useShallow((s) => ({ subcategories: s.subcategories, addTransaction: s.addTransaction, addRecurringCost: s.addRecurringCost })),
   )
-  const options = subcategories
+  const { homeCats } = useAreaCategories()
+  const homeOptions = subcategories
     .filter((sc) => sc.categoryId === HOME_CATEGORY_ID && !PURCHASE_SUBCATEGORIES.includes(sc.id) && sc.id !== FINANCING_SUBCATEGORY_ID)
     .sort((a, b) => {
       const ia = BILL_ORDER.indexOf(a.id)
@@ -123,12 +161,13 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.name.localeCompare(b.name, 'pt-BR')
     })
     .map((sc) => ({ value: sc.id, label: sc.name }))
-  const initialLabel = options.find((o) => o.value === initial)?.label ?? ''
+  const initialLabel = homeOptions.find((o) => o.value === initial)?.label ?? ''
   const sharing = useHomeShare()
 
   const { register, handleSubmit, control, setValue, getValues, formState } = useForm({
     resolver: zodResolver(billSchema),
     defaultValues: {
+      categoryId: HOME_CATEGORY_ID,
       subcategoryId: initial ?? '',
       description: initialLabel,
       amount: '',
@@ -138,7 +177,12 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
       paymentMethod: 'pix' as PaymentMethod,
     },
   })
-  const [subcategoryId, paid, repeat, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'paid', 'repeat', 'paymentMethod'] })
+  const [categoryId, subcategoryId, paid, repeat, paymentMethod] = useWatch({ control, name: ['categoryId', 'subcategoryId', 'paid', 'repeat', 'paymentMethod'] })
+  // Moradia: os tipos de conta; outra categoria: as subcategorias dela (opcional).
+  const options =
+    categoryId === HOME_CATEGORY_ID
+      ? homeOptions
+      : subcategories.filter((sc) => sc.categoryId === categoryId).map((sc) => ({ value: sc.id, label: sc.name }))
   const e = formState.errors
 
   return (
@@ -147,6 +191,8 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
       className={formClass}
       onSubmit={handleSubmit(async (v) => {
         const due = v.date as ISODate
+        const sub = v.subcategoryId || null
+        const link = homeLinkFor(v.categoryId, homeCats)
         if (sharing.on) {
           const ok = await sharing.send({
             title: v.description,
@@ -154,7 +200,8 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
             installments: v.repeat ? SHARED_FIXED_MONTHS : 1,
             recurring: v.repeat,
             due,
-            subcategoryId: v.subcategoryId,
+            subcategoryId: sub,
+            categoryId: v.categoryId,
           })
           if (ok) onDone()
           return
@@ -165,8 +212,9 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
             description: v.description,
             amount: cents(v.amount),
             type: 'despesa',
-            categoryId: HOME_CATEGORY_ID,
-            subcategoryId: v.subcategoryId,
+            categoryId: v.categoryId,
+            subcategoryId: sub,
+            ...link,
             paymentMethod: v.paymentMethod,
             dueDay: Number(due.slice(8, 10)),
             autoRenew: true,
@@ -185,7 +233,9 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
             homeExpense({
               description: v.description,
               amount: cents(v.amount),
-              subcategoryId: v.subcategoryId,
+              categoryId: v.categoryId,
+              subcategoryId: sub,
+              ...link,
               dueDate: due,
               paymentMethod: v.paymentMethod,
               paid: v.paid,
@@ -196,21 +246,30 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
       })}
     >
       <div className={bodyClass}>
-        <div className="flex flex-col gap-2">
-          <Label>Conta</Label>
-          <Choices
-            label="Conta"
-            value={subcategoryId}
-            onChange={(id) => {
-              const prev = options.find((o) => o.value === subcategoryId)?.label
-              setValue('subcategoryId', id, { shouldValidate: true })
-              const desc = getValues('description')
-              if (!desc || desc === prev) setValue('description', options.find((o) => o.value === id)?.label ?? '')
-            }}
-            options={options}
-          />
-          <FieldError message={e.subcategoryId?.message} />
-        </div>
+        <CategoryField
+          value={categoryId}
+          onChange={(id) => {
+            setValue('categoryId', id)
+            setValue('subcategoryId', '', { shouldValidate: formState.isSubmitted })
+          }}
+        />
+        {options.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Label>{categoryId === HOME_CATEGORY_ID ? 'Conta' : 'Subcategoria (opcional)'}</Label>
+            <Choices
+              label="Conta"
+              value={subcategoryId}
+              onChange={(id) => {
+                const prev = options.find((o) => o.value === subcategoryId)?.label
+                setValue('subcategoryId', id, { shouldValidate: true })
+                const desc = getValues('description')
+                if (!desc || desc === prev) setValue('description', options.find((o) => o.value === id)?.label ?? '')
+              }}
+              options={options}
+            />
+            <FieldError message={e.subcategoryId?.message} />
+          </div>
+        )}
         <Field id="b-desc" label="Descrição" error={e.description?.message}>
           <Input id="b-desc" aria-invalid={!!e.description} {...register('description')} />
         </Field>
@@ -429,7 +488,7 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
 
 /** Fixo da casa a partir de um vencimento. */
 function homeRecurring(
-  fields: { description: string; amount: number; subcategoryId: string; due: ISODate; paymentMethod: PaymentMethod },
+  fields: { description: string; amount: number; subcategoryId: string | null; due: ISODate; paymentMethod: PaymentMethod; categoryId?: string; homeLink?: boolean },
   frequency: 'mensal' | 'anual',
 ): RecurringCost {
   const base = {
@@ -437,7 +496,8 @@ function homeRecurring(
     description: fields.description,
     amount: fields.amount,
     type: 'despesa' as const,
-    categoryId: HOME_CATEGORY_ID,
+    categoryId: fields.categoryId ?? HOME_CATEGORY_ID,
+    ...(fields.homeLink ? { homeLink: true } : {}),
     subcategoryId: fields.subcategoryId,
     paymentMethod: fields.paymentMethod,
     dueDay: Number(fields.due.slice(8, 10)),
@@ -728,25 +788,28 @@ function IptuForm({ onDone }: { onDone: () => void }) {
 // ---------------------------------------------------------------------------
 
 const purchaseSchema = z.object({
-  subcategoryId: z.string().min(1, 'Escolha o tipo'),
+  categoryId: z.string().min(1),
+  subcategoryId: z.string(),
   description: z.string().trim().min(2, 'O que foi comprado?').max(80, 'Máximo de 80 caracteres'),
   amount: money('Informe o valor'),
   date,
   repeat: z.enum(['nao', 'mensal', 'anual']),
   paymentMethod: z.enum(PAYMENT_METHODS),
-})
+}).refine((v) => v.categoryId !== HOME_CATEGORY_ID || v.subcategoryId !== '', { path: ['subcategoryId'], message: 'Escolha o tipo' })
 
 function PurchaseForm({ onDone }: { onDone: () => void }) {
   const { subcategories, addTransaction, addRecurringCost } = useFinanceStore(
     useShallow((s) => ({ subcategories: s.subcategories, addTransaction: s.addTransaction, addRecurringCost: s.addRecurringCost })),
   )
-  const options = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
+  const { homeCats } = useAreaCategories()
+  const homeOptions = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
     .filter((sc): sc is NonNullable<typeof sc> => !!sc)
     .map((sc) => ({ value: sc.id, label: sc.name }))
   const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(purchaseSchema),
     defaultValues: {
+      categoryId: HOME_CATEGORY_ID,
       subcategoryId: '',
       description: '',
       amount: '',
@@ -755,7 +818,11 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
       paymentMethod: 'pix' as PaymentMethod,
     },
   })
-  const [subcategoryId, repeat, paymentMethod] = useWatch({ control, name: ['subcategoryId', 'repeat', 'paymentMethod'] })
+  const [categoryId, subcategoryId, repeat, paymentMethod] = useWatch({ control, name: ['categoryId', 'subcategoryId', 'repeat', 'paymentMethod'] })
+  const options =
+    categoryId === HOME_CATEGORY_ID
+      ? homeOptions
+      : subcategories.filter((sc) => sc.categoryId === categoryId).map((sc) => ({ value: sc.id, label: sc.name }))
   const e = formState.errors
   return (
     <form
@@ -769,23 +836,40 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
             installments: v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1,
             recurring: v.repeat === 'mensal',
             due: v.date as ISODate,
-            subcategoryId: v.subcategoryId,
+            subcategoryId: v.subcategoryId || null,
+            categoryId: v.categoryId,
           })
           if (ok) onDone()
           return
         }
-        const fields = { description: v.description, amount: cents(v.amount), subcategoryId: v.subcategoryId, paymentMethod: v.paymentMethod }
+        const fields = {
+          description: v.description,
+          amount: cents(v.amount),
+          categoryId: v.categoryId,
+          subcategoryId: v.subcategoryId || null,
+          paymentMethod: v.paymentMethod,
+          ...homeLinkFor(v.categoryId, homeCats),
+        }
         if (v.repeat === 'nao') addTransaction(homeExpense({ ...fields, dueDate: v.date as ISODate, paid: true }))
         else addRecurringCost(homeRecurring({ ...fields, due: v.date as ISODate }, v.repeat), true)
         onDone()
       })}
     >
       <div className={bodyClass}>
-        <div className="flex flex-col gap-2">
-          <Label>Tipo</Label>
-          <Choices label="Tipo" value={subcategoryId} onChange={(x) => setValue('subcategoryId', x, { shouldValidate: true })} options={options} />
-          <FieldError message={e.subcategoryId?.message} />
-        </div>
+        <CategoryField
+          value={categoryId}
+          onChange={(id) => {
+            setValue('categoryId', id)
+            setValue('subcategoryId', '', { shouldValidate: formState.isSubmitted })
+          }}
+        />
+        {options.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Label>{categoryId === HOME_CATEGORY_ID ? 'Tipo' : 'Subcategoria (opcional)'}</Label>
+            <Choices label="Tipo" value={subcategoryId} onChange={(x) => setValue('subcategoryId', x, { shouldValidate: true })} options={options} />
+            <FieldError message={e.subcategoryId?.message} />
+          </div>
+        )}
         <Field id="p-desc" label="O que foi comprado" error={e.description?.message}>
           <Input id="p-desc" placeholder="Ex.: produtos de limpeza, panela, geladeira" aria-invalid={!!e.description} {...register('description')} />
         </Field>
@@ -832,7 +916,7 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
 }
 
 const titles = {
-  bill: { title: 'Conta da casa', description: 'Entra em Lançamentos na categoria Moradia.' },
+  bill: { title: 'Conta da casa', description: 'Entra em Lançamentos na categoria escolhida e aparece aqui na Casa.' },
   reminder: { title: 'Lembrete da casa', description: 'O app avisa 30 dias antes de vencer.' },
   complete: { title: 'Feito', description: 'Registrar que o cuidado foi feito.' },
   rent: { title: 'Aluguel', description: 'Lançado todo mês na categoria Moradia.' },

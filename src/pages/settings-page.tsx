@@ -27,6 +27,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountDialog, type AccountDialogKind } from '@/components/settings/account-dialogs'
 import { AutoAcceptDialog, HandleDialog } from '@/components/shared/shared-ui'
+import { AreaCategoriesCard } from '@/components/settings/area-categories'
 import { CategoryManager } from '@/components/settings/category-manager'
 import { Button } from '@/components/ui/button'
 import { Affix } from '@/components/ui/form-kit'
@@ -577,7 +578,12 @@ export function SettingsSectionContent({ section }: { section: Section }) {
     <div className="flex min-w-0 flex-col gap-6">
       {section === 'conta' && <AccountSection />}
       {section === 'preferencias' && <PreferencesSection />}
-      {section === 'categorias' && <CategoryManager />}
+      {section === 'categorias' && (
+        <div className="flex flex-col gap-4">
+          <AreaCategoriesCard />
+          <CategoryManager />
+        </div>
+      )}
       {section === 'dados' && <DataSection />}
     </div>
   )

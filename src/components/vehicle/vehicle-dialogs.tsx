@@ -17,7 +17,7 @@ import {
   type ShareState,
 } from '@/components/shared/share-fields'
 import { ShareExisting, canShareExisting } from '@/components/shared/share-existing'
-import { AdjustInstallments } from '@/components/transactions/adjust-installments'
+import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
 import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect } from '@/components/ui/form-kit'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
@@ -719,7 +719,11 @@ function ExpenseForm({
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
         </div>
         {!transaction && shareAvailable && <ShareFields share={share} onChange={setShare} label="Dividir este gasto" note={pendingShareNote} />}
-        {transaction?.installment && !transaction.sharedBillId && <AdjustInstallments transaction={transaction} onDone={onDone} />}
+        {transaction?.installment && !transaction.sharedBillId && (
+          <div className="rounded-xl border p-3">
+            <InstallmentProgressEditor transaction={transaction} onDone={onDone} />
+          </div>
+        )}
         {transaction && parcels > 1 && <p className="text-xs text-muted-foreground">Salve as parcelas; depois abra uma delas para dividir.</p>}
         {transaction && parcels === 1 && canShareExisting(transaction, signedIn) && <ShareExisting transaction={transaction} />}
       </div>

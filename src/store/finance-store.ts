@@ -28,10 +28,13 @@ export type TransactionEdit = Pick<
   | 'payToUid'
   | 'payToHandle'
   | 'notes'
+  | 'homeLink'
+  | 'costKind'
+  | 'vehicleId'
 >
 
 /** Campos que se propagam para as próximas ocorrências da série. */
-const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes'] as const
+const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
@@ -99,7 +102,7 @@ interface FinanceState extends FinanceData {
    * quantas são no total. Pagas ficam como estão (só a numeração acompanha);
    * as pendentes são refeitas, uma por mês a partir da primeira pendente.
    */
-  adjustInstallments: (installmentId: string, adjust: { amount: Cents; next: number; total: number }) => void
+  adjustInstallments: (installmentId: string, adjust: { amount?: Cents; next: number; total: number }) => void
   /** Marca/desmarca parcelamento como conta fixa (fora do saldo devedor, sem "(n/N)" na descrição). */
   toggleFixedSeries: (installmentId: string) => void
   /** Tira o "(n/N)" das séries já marcadas como conta fixa (ex.: marcadas antes desta regra). */
@@ -341,14 +344,16 @@ export const useFinanceStore = create<FinanceState>()(
           const openWrites: Transaction[] = Array.from({ length: remaining }, (_, i) => {
             const n = next + i
             const current = open[i] ?? { ...template, id: createId(), status: 'pendente' as const, paymentDate: null, odometer: null, createdAt: now }
-            return { ...current, amount, dueDate: addMonthsISO(start, i), description: label(n), installment: ref(n) }
+            // Sem `amount`: cada parcela mantém o próprio valor; as novas usam o da última pendente.
+            const value = amount ?? open[i]?.amount ?? open[open.length - 1]?.amount ?? template.amount
+            return { ...current, amount: value, dueDate: addMonthsISO(start, i), description: label(n), installment: ref(n) }
           })
           const inst = installments.find((i) => i.id === installmentId)
           commit({
             upserts: [
               ...txWrites([...paidWrites, ...openWrites]),
               ...(inst
-                ? [{ name: 'installments' as const, data: { ...inst, totalInstallments: total, currentInstallment: next, installmentAmount: amount, totalAmount: amount * total } }]
+                ? [{ name: 'installments' as const, data: { ...inst, totalInstallments: total, currentInstallment: next, installmentAmount: amount ?? inst.installmentAmount, totalAmount: (amount ?? inst.installmentAmount) * total } }]
                 : []),
             ],
             // Pendentes que sobraram (agora são menos parcelas).

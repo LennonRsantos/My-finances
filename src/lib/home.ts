@@ -1,10 +1,16 @@
 /**
- * Cálculos da página Casa: contas da categoria Moradia no mês, comparação
- * com os meses anteriores e manutenção da casa (lembretes por tempo).
+ * Cálculos da página Casa: contas vinculadas à casa no mês (Moradia e as
+ * categorias marcadas, ou lançamentos vinculados um a um), comparação com os
+ * meses anteriores e manutenção da casa (lembretes por tempo).
  */
 import type { Cents, Installment, ISODate, RecurringCost, Transaction, YearMonth } from '@/types/finance'
+import { costKindOf, DEFAULT_HOME_CATEGORIES, isHome } from './areas'
 import { lastNMonths, monthOf, shiftMonth } from './dates'
 import { resolveStatus } from './finance'
+
+/** Categorias da casa (Configurações); padrão: só Moradia. */
+export type HomeCats = ReadonlySet<string>
+const DEFAULT_CATS: HomeCats = new Set(DEFAULT_HOME_CATEGORIES)
 
 export const HOME_CATEGORY_ID = 'cat-moradia'
 export const HOME_MAINTENANCE_SUBCATEGORY_ID = 'sub-casa-manutencao'
@@ -27,11 +33,19 @@ export const PURCHASE_SUBCATEGORIES = [
 const purchaseSet = new Set(PURCHASE_SUBCATEGORIES)
 export const isHomePurchase = (t: Pick<Transaction, 'subcategoryId'>) => !!t.subcategoryId && purchaseSet.has(t.subcategoryId)
 
-export const homeExpenses = (transactions: Transaction[]) =>
-  transactions.filter((t) => t.categoryId === HOME_CATEGORY_ID && t.type === 'despesa')
+/**
+ * Vai para "Compras" da casa: subcategoria de compra da Moradia, ou gasto
+ * variável de outra categoria vinculado à casa (ex.: mercado da casa).
+ * O resto (contas e fixos de qualquer categoria) fica em "Contas do mês".
+ */
+export const isHomePurchaseTx = (t: Transaction) =>
+  isHomePurchase(t) || (t.categoryId !== HOME_CATEGORY_ID && costKindOf(t) === 'variavel')
 
-/** Contas da casa (aluguel, luz, água...), sem as compras. */
-export const homeBills = (transactions: Transaction[]) => homeExpenses(transactions).filter((t) => !isHomePurchase(t))
+export const homeExpenses = (transactions: Transaction[], cats: HomeCats = DEFAULT_CATS) =>
+  transactions.filter((t) => t.type === 'despesa' && isHome(t, cats))
+
+/** Contas da casa (aluguel, luz, água... e o que mais estiver vinculado), sem as compras. */
+export const homeBills = (transactions: Transaction[], cats: HomeCats = DEFAULT_CATS) => homeExpenses(transactions, cats).filter((t) => !isHomePurchaseTx(t))
 
 export interface HomeMonth {
   items: Transaction[]
@@ -41,8 +55,14 @@ export interface HomeMonth {
   overdue: Cents
 }
 
-export function homeMonth(transactions: Transaction[], month: YearMonth, today: ISODate, only: 'contas' | 'tudo' = 'tudo'): HomeMonth {
-  const items = (only === 'contas' ? homeBills(transactions) : homeExpenses(transactions))
+export function homeMonth(
+  transactions: Transaction[],
+  month: YearMonth,
+  today: ISODate,
+  only: 'contas' | 'tudo' = 'tudo',
+  cats: HomeCats = DEFAULT_CATS,
+): HomeMonth {
+  const items = (only === 'contas' ? homeBills(transactions, cats) : homeExpenses(transactions, cats))
     .filter((t) => monthOf(t.dueDate) === month)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
   let paid = 0
@@ -58,6 +78,8 @@ export function homeMonth(transactions: Transaction[], month: YearMonth, today: 
 
 export interface BillComparison {
   subcategoryId: string | null
+  /** Categoria quando não há subcategoria (conta vinculada de outra categoria) */
+  categoryId: string
   total: Cents
   /** Média dos meses anteriores com essa conta; `null` sem histórico */
   average: Cents | null
@@ -66,18 +88,23 @@ export interface BillComparison {
 }
 
 /** Cada tipo de conta no mês contra a média dos `n` meses anteriores em que apareceu. */
-export function compareBills(transactions: Transaction[], month: YearMonth, n = 3): BillComparison[] {
+export function compareBills(transactions: Transaction[], month: YearMonth, n = 3, cats: HomeCats = DEFAULT_CATS): BillComparison[] {
   const previous = new Set(Array.from({ length: n }, (_, i) => shiftMonth(month, -(i + 1))))
-  const current = new Map<string | null, Cents>()
-  const history = new Map<string | null, Map<YearMonth, Cents>>()
+  // Agrupa por subcategoria; sem subcategoria, pela categoria (não mistura categorias diferentes).
+  const keyOf = (t: Transaction) => t.subcategoryId ?? `cat:${t.categoryId}`
+  const meta = new Map<string, { subcategoryId: string | null; categoryId: string }>()
+  const current = new Map<string, Cents>()
+  const history = new Map<string, Map<YearMonth, Cents>>()
 
-  for (const t of homeBills(transactions)) {
+  for (const t of homeBills(transactions, cats)) {
+    const key = keyOf(t)
+    meta.set(key, { subcategoryId: t.subcategoryId, categoryId: t.categoryId })
     const m = monthOf(t.dueDate)
-    if (m === month) current.set(t.subcategoryId, (current.get(t.subcategoryId) ?? 0) + t.amount)
+    if (m === month) current.set(key, (current.get(key) ?? 0) + t.amount)
     else if (previous.has(m)) {
-      const byMonth = history.get(t.subcategoryId) ?? new Map<YearMonth, Cents>()
+      const byMonth = history.get(key) ?? new Map<YearMonth, Cents>()
       byMonth.set(m, (byMonth.get(m) ?? 0) + t.amount)
-      history.set(t.subcategoryId, byMonth)
+      history.set(key, byMonth)
     }
   }
 
@@ -86,10 +113,10 @@ export function compareBills(transactions: Transaction[], month: YearMonth, n = 
     return i === -1 ? BILL_ORDER.length : i
   }
   return [...current]
-    .map(([subcategoryId, total]) => {
-      const months = [...(history.get(subcategoryId)?.values() ?? [])]
+    .map(([key, total]) => {
+      const months = [...(history.get(key)?.values() ?? [])]
       const average = months.length ? Math.round(months.reduce((a, v) => a + v, 0) / months.length) : null
-      return { subcategoryId, total, average, change: average ? (total - average) / average : null }
+      return { ...meta.get(key)!, total, average, change: average ? (total - average) / average : null }
     })
     .sort((a, b) => order(a.subcategoryId) - order(b.subcategoryId) || b.total - a.total)
 }
@@ -113,25 +140,30 @@ export interface PurchaseSummary {
   year: Cents
   /** Média por mês nos últimos 12 meses */
   monthlyAverage: Cents
-  bySubcategory: { subcategoryId: string; total: Cents }[]
+  /** Por subcategoria; sem subcategoria, pela categoria */
+  bySubcategory: { subcategoryId: string | null; categoryId: string; total: Cents }[]
   /** Todas as compras, das mais novas para as mais antigas */
   items: Transaction[]
 }
 
-export function purchaseSummary(transactions: Transaction[], endMonth: YearMonth): PurchaseSummary {
+export function purchaseSummary(transactions: Transaction[], endMonth: YearMonth, cats: HomeCats = DEFAULT_CATS): PurchaseSummary {
   const window = new Set(lastNMonths(endMonth, 12))
-  const items = homeExpenses(transactions)
-    .filter(isHomePurchase)
+  const items = homeExpenses(transactions, cats)
+    .filter(isHomePurchaseTx)
     .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
   const inYear = items.filter((t) => window.has(monthOf(t.dueDate)))
-  const bySub = new Map<string, Cents>()
-  for (const t of inYear) bySub.set(t.subcategoryId!, (bySub.get(t.subcategoryId!) ?? 0) + t.amount)
+  const bySub = new Map<string, { subcategoryId: string | null; categoryId: string; total: Cents }>()
+  for (const t of inYear) {
+    const key = t.subcategoryId ?? `cat:${t.categoryId}`
+    const cur = bySub.get(key) ?? { subcategoryId: t.subcategoryId, categoryId: t.categoryId, total: 0 }
+    bySub.set(key, { ...cur, total: cur.total + t.amount })
+  }
   const year = inYear.reduce((a, t) => a + t.amount, 0)
   return {
     thisMonth: items.filter((t) => monthOf(t.dueDate) === endMonth).reduce((a, t) => a + t.amount, 0),
     year,
     monthlyAverage: Math.round(year / 12),
-    bySubcategory: [...bySub].map(([subcategoryId, total]) => ({ subcategoryId, total })).sort((a, b) => b.total - a.total),
+    bySubcategory: [...bySub.values()].sort((a, b) => b.total - a.total),
     items,
   }
 }

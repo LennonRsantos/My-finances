@@ -139,6 +139,13 @@ export interface Transaction {
   notes?: string
   /** Veículo a que o gasto pertence (aba Veículo) */
   vehicleId?: Vehicle['id'] | null
+  /**
+   * Vínculo com a Casa: `true` entra, `false` não entra; ausente = pela
+   * categoria (Configurações > Categorias > "Entram na Casa").
+   */
+  homeLink?: boolean | null
+  /** Custo fixo ou variável; ausente = automático (conta fixa e parcela são fixos) */
+  costKind?: CostKind | null
   /** Hodômetro (km) no momento do gasto */
   odometer?: number | null
   /** Presente quando o lançamento é um abastecimento */
@@ -153,6 +160,8 @@ export interface Transaction {
   sharedSuspended?: boolean
   createdAt: string
 }
+
+export type CostKind = 'fixo' | 'variavel'
 
 // ---------------------------------------------------------------------------
 // Custos recorrentes / fixos
@@ -185,6 +194,9 @@ interface RecurringCostBase {
   payToHandle?: string | null
   /** Veículo (ex.: IPVA, seguro); passa para as ocorrências geradas */
   vehicleId?: Vehicle['id'] | null
+  /** Vínculo com a Casa e fixo/variável, copiados para cada mês (ver `Transaction`) */
+  homeLink?: boolean | null
+  costKind?: CostKind | null
   createdAt: string
 }
 
@@ -491,6 +503,10 @@ export interface UserSettings {
    * 12x): não entram no saldo devedor. Guarda `installment.installmentId`.
    */
   fixedSeries?: string[]
+  /** Categorias cujos lançamentos entram na Casa (padrão: Moradia) */
+  homeCategoryIds?: string[]
+  /** Categorias que já vêm vinculadas ao Veículo no lançamento (padrão: Veículo) */
+  vehicleCategoryIds?: string[]
   /** Lançamentos e Relatórios abrem com os últimos filtros usados */
   keepFilters?: boolean
   /** Filtros guardados quando `keepFilters` está ligado (`null` = nenhum) */

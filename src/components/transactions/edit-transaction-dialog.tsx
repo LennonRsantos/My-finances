@@ -8,7 +8,10 @@ import { ShareExisting, canShareExisting } from '@/components/shared/share-exist
 import { useSharedRole } from '@/components/shared/share-fields'
 import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-field'
 import { SharedBillDialog } from '@/components/shared/shared-ui'
-import { AdjustInstallments } from '@/components/transactions/adjust-installments'
+import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
+import { LinkFields } from '@/components/transactions/link-fields'
+import { useAreaCategories } from '@/hooks/use-areas'
+import { costKindOf, currentLink, linkPayload, type LinkTarget } from '@/lib/areas'
 import { Button } from '@/components/ui/button'
 import { Affix } from '@/components/ui/form-kit'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -43,14 +46,22 @@ const schema = z.object({
 type Values = z.infer<typeof schema>
 
 function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone: () => void }) {
-  const { categories, subcategories, updateTransaction, deleteTransactionScoped } = useFinanceStore(
+  const { categories, subcategories, vehicles, updateTransaction, deleteTransactionScoped } = useFinanceStore(
     useShallow((s) => ({
       categories: s.categories,
       subcategories: s.subcategories,
+      vehicles: s.vehicles,
       updateTransaction: s.updateTransaction,
       deleteTransactionScoped: s.deleteTransactionScoped,
     })),
   )
+  // Vínculo com Casa/Veículo e fixo/variável (abastecimento fica sempre no veículo).
+  const { homeCats } = useAreaCategories()
+  const activeVehicles = vehicles.filter((v) => v.active || v.id === t.vehicleId)
+  const [link, setLink] = useState<LinkTarget>(() => currentLink(t, homeCats))
+  const [linkVehicle, setLinkVehicle] = useState<string | null>(t.vehicleId ?? null)
+  const autoKind = t.recurringCostId || t.installment ? 'fixo' : 'variavel'
+  const [kind, setKind] = useState(() => costKindOf(t))
   const inSeries = !!(t.installment || t.recurringCostId)
   // Parcelamento que na verdade é conta fixa (ex.: aluguel dividido em 12x).
   const seriesId = t.installment?.installmentId
@@ -112,6 +123,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         payToUid: !isIncome && v.payTo && payLink ? payLink.uid : null,
         payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
         notes: v.notes || undefined,
+        ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
       },
       scope,
     )
@@ -126,14 +138,26 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
         <div className="flex flex-col gap-5 overflow-y-auto px-5 pb-4">
           {inSeries && (
             <div className="flex flex-col gap-2 rounded-xl border p-3">
-              <p className="flex items-center gap-2 text-sm font-medium">
+              <div className="flex items-start gap-2 text-sm font-medium">
                 {t.installment && !isFixed ? (
-                  <Layers className="size-4 text-muted-foreground" />
+                  <Layers className="mt-2.5 size-4 shrink-0 text-muted-foreground" />
                 ) : (
-                  <Repeat className="size-4 text-muted-foreground" />
+                  <Repeat className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 )}
-                {t.installment ? `Parcela ${t.installment.number} de ${t.installment.total}` : 'Lançamento fixo'}
-              </p>
+                {t.installment && !t.sharedBillId ? (
+                  // Andamento editável: "Parcela [5] de [10]".
+                  <div className="min-w-0 flex-1">
+                    <InstallmentProgressEditor transaction={t} onDone={onDone} />
+                  </div>
+                ) : t.installment ? (
+                  <span className="flex flex-col gap-0.5">
+                    {`Parcela ${t.installment.number} de ${t.installment.total}`}
+                    <span className="text-xs font-normal text-muted-foreground">Conta dividida: ajuste em "Editar conta dividida".</span>
+                  </span>
+                ) : (
+                  'Lançamento fixo'
+                )}
+              </div>
               <div role="radiogroup" aria-label="Aplicar alterações em" className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
                 {(
                   [
@@ -172,11 +196,6 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                   </span>
                   <Switch checked={isFixed} onCheckedChange={() => toggleFixedSeries(seriesId)} aria-label="Conta fixa (não é dívida)" />
                 </label>
-              )}
-              {t.installment && !t.sharedBillId && (
-                <div className="mt-1 flex flex-col border-t pt-3">
-                  <AdjustInstallments transaction={t} onDone={onDone} />
-                </div>
               )}
             </div>
           )}
@@ -290,6 +309,19 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
               </div>
             )}
           </div>
+
+          {!isIncome && !t.fuel && (
+            <LinkFields
+              link={link}
+              onLink={setLink}
+              vehicles={activeVehicles}
+              vehicleId={linkVehicle}
+              onVehicle={setLinkVehicle}
+              kind={kind}
+              onKind={setKind}
+              autoKind={autoKind}
+            />
+          )}
 
           {!isIncome && (
             <PayToField

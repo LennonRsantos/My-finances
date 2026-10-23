@@ -39,6 +39,8 @@ export function occurrenceFor(rc: RecurringCost, month: YearMonth, createdAt = n
     payToUid: rc.payToUid ?? null,
     payToHandle: rc.payToHandle ?? null,
     vehicleId: rc.vehicleId ?? null,
+    ...(rc.homeLink != null ? { homeLink: rc.homeLink } : {}),
+    ...(rc.costKind ? { costKind: rc.costKind } : {}),
     createdAt,
   }
 }

@@ -4,6 +4,7 @@
  */
 import { differenceInCalendarDays } from 'date-fns'
 import type { Cents, FuelType, ISODate, MaintenanceQuote, MaintenanceReminder, RecurringCost, Transaction, Vehicle, YearMonth } from '@/types/finance'
+import { costSplit } from './areas'
 import { addMonthsISO, lastNMonths, monthOf, parseDate } from './dates'
 
 export const VEHICLE_CATEGORY_ID = 'cat-veiculo'
@@ -141,6 +142,8 @@ export interface CostSummary {
   /** Total por subcategoria (`null` = sem subcategoria) no período */
   bySubcategory: { subcategoryId: string | null; total: Cents }[]
   total: Cents
+  /** Fixos (conta fixa, parcela) e variáveis no período */
+  split: { fixo: Cents; variavel: Cents }
   thisMonth: Cents
   /** Km rodados no período (pelos registros de hodômetro) */
   km: number
@@ -168,6 +171,7 @@ export function costSummary(transactions: Transaction[], vehicleId: string, endM
     months: window.map((month) => ({ month, total: byMonth.get(month) ?? 0 })),
     bySubcategory: [...bySub].map(([subcategoryId, v]) => ({ subcategoryId, total: v })).sort((a, b) => b.total - a.total),
     total,
+    split: costSplit(list),
     thisMonth: byMonth.get(endMonth) ?? 0,
     km,
     costPerKm: km >= 100 ? Math.round(total / km) : null,

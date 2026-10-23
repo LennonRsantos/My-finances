@@ -33,7 +33,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
 import { formatDateShort, formatMonthLabel, todayISO } from '@/lib/dates'
 import { resolveStatus } from '@/lib/finance'
+import { COST_KIND_LABEL, costKindOf, costSplit, isHome } from '@/lib/areas'
 import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseSummary, type SharedHousing } from '@/lib/home'
+import { useAreaCategories } from '@/hooks/use-areas'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { reminderStatus, type ReminderLevel } from '@/lib/vehicle'
@@ -61,7 +63,9 @@ const levelColor: Record<ReminderLevel, string> = { atrasado: 'var(--expense)', 
 function MonthOverview() {
   const transactions = useFinanceStore((s) => s.transactions)
   const month = useUIStore((s) => s.selectedMonth)
-  const data = homeMonth(transactions, month, todayISO())
+  const { homeCats } = useAreaCategories()
+  const data = homeMonth(transactions, month, todayISO(), 'tudo', homeCats)
+  const split = costSplit(data.items)
   const pending = data.open - data.overdue
   const pct = (v: number) => (data.total ? `${(v / data.total) * 100}%` : '0%')
   const parts = [
@@ -101,6 +105,16 @@ function MonthOverview() {
           </div>
         ))}
       </dl>
+      {data.total > 0 && (
+        <p className="-mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+          <span>
+            Fixos <span className="font-medium text-foreground tabular-nums">{formatMoney(split.fixo)}</span>
+          </span>
+          <span>
+            Variáveis <span className="font-medium text-foreground tabular-nums">{formatMoney(split.variavel)}</span>
+          </span>
+        </p>
+      )}
     </Card>
   )
 }
@@ -112,14 +126,17 @@ const billGroups: { status: TransactionStatus; label: string }[] = [
 ]
 
 function BillsCard({ open }: { open: (d: HomeDialogState) => void }) {
-  const { transactions, subcategories, togglePaid } = useFinanceStore(
-    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, togglePaid: s.togglePaid })),
+  const { transactions, subcategories, categories, togglePaid } = useFinanceStore(
+    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, categories: s.categories, togglePaid: s.togglePaid })),
   )
   const month = useUIStore((s) => s.selectedMonth)
   const edit = useUIStore((s) => s.setEditingTransaction)
+  const { homeCats } = useAreaCategories()
   const today = todayISO()
-  const data = homeMonth(transactions, month, today, 'contas')
-  const subName = (id: string | null) => subcategories.find((s) => s.id === id)?.name ?? 'Moradia'
+  const data = homeMonth(transactions, month, today, 'contas', homeCats)
+  // Subcategoria; conta vinculada de outra categoria mostra o nome da categoria.
+  const kindName = (t: { subcategoryId: string | null; categoryId: string }) =>
+    subcategories.find((s) => s.id === t.subcategoryId)?.name ?? (t.categoryId === HOME_CATEGORY_ID ? 'Moradia' : (categories.find((c) => c.id === t.categoryId)?.name ?? 'Outros'))
   const groups = billGroups
     .map((g) => ({ ...g, items: data.items.filter((t) => resolveStatus(t, today) === g.status) }))
     .filter((g) => g.items.length > 0)
@@ -189,8 +206,8 @@ function BillsCard({ open }: { open: (d: HomeDialogState) => void }) {
                               <span className={cn('line-clamp-2 min-w-0 break-words sm:line-clamp-1', paid && 'text-muted-foreground')}>{t.description}</span>
                             </span>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {subName(t.subcategoryId) !== t.description && <>{subName(t.subcategoryId)} · </>}
-                              {paid ? 'venceu' : 'vence'} {formatDateShort(t.dueDate)}
+                              {kindName(t) !== t.description && <>{kindName(t)} · </>}
+                              {COST_KIND_LABEL[costKindOf(t)]} · {paid ? 'venceu' : 'vence'} {formatDateShort(t.dueDate)}
                             </span>
                             {t.sharedBillId && (
                               <span className="mt-1 flex">
@@ -224,12 +241,16 @@ function BillsCard({ open }: { open: (d: HomeDialogState) => void }) {
 }
 
 function CompareCard() {
-  const { transactions, subcategories } = useFinanceStore(useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories })))
+  const { transactions, subcategories, categories } = useFinanceStore(
+    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, categories: s.categories })),
+  )
   const month = useUIStore((s) => s.selectedMonth)
-  const rows = compareBills(transactions, month)
+  const { homeCats } = useAreaCategories()
+  const rows = compareBills(transactions, month, 3, homeCats)
   if (!rows.length) return null
   const max = Math.max(...rows.map((r) => Math.max(r.total, r.average ?? 0)))
-  const subName = (id: string | null) => subcategories.find((s) => s.id === id)?.name ?? 'Moradia'
+  const nameOf = (r: { subcategoryId: string | null; categoryId: string }) =>
+    subcategories.find((s) => s.id === r.subcategoryId)?.name ?? (r.categoryId === HOME_CATEGORY_ID ? 'Moradia' : (categories.find((c) => c.id === r.categoryId)?.name ?? 'Outros'))
   const anyHistory = rows.some((r) => r.average !== null)
 
   return (
@@ -246,9 +267,9 @@ function CompareCard() {
             const up = r.change !== null && r.change > 0.05
             const down = r.change !== null && r.change < -0.05
             return (
-              <li key={r.subcategoryId ?? 'none'} className="flex flex-col gap-1.5">
+              <li key={r.subcategoryId ?? `cat:${r.categoryId}`} className="flex flex-col gap-1.5">
                 <div className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="min-w-0 truncate">{subName(r.subcategoryId)}</span>
+                  <span className="min-w-0 truncate">{nameOf(r)}</span>
                   <span className="flex shrink-0 items-center gap-2 tabular-nums">
                     {r.change !== null && (
                       <span className={cn('flex items-center gap-0.5 text-xs', up ? 'text-expense' : down ? 'text-income' : 'text-muted-foreground')}>
@@ -260,7 +281,7 @@ function CompareCard() {
                     <span className="font-medium">{formatMoney(r.total)}</span>
                   </span>
                 </div>
-                <Progress value={max ? r.total / max : 0} color={up ? 'var(--expense)' : 'var(--info)'} label={`${subName(r.subcategoryId)}: ${formatMoney(r.total)}`} />
+                <Progress value={max ? r.total / max : 0} color={up ? 'var(--expense)' : 'var(--info)'} label={`${nameOf(r)}: ${formatMoney(r.total)}`} />
                 {r.average !== null ? (
                   <span className="text-xs text-muted-foreground">Média: {formatMoney(r.average)}</span>
                 ) : (
@@ -276,9 +297,8 @@ function CompareCard() {
 }
 
 function FixedCard() {
-  const recurring = useFinanceStore(
-    useShallow((s) => s.recurringCosts.filter((r) => r.active && r.type === 'despesa' && r.categoryId === HOME_CATEGORY_ID)),
-  )
+  const { homeCats } = useAreaCategories()
+  const recurring = useFinanceStore(useShallow((s) => s.recurringCosts.filter((r) => r.active && r.type === 'despesa' && isHome(r, homeCats))))
   if (!recurring.length) return null
   const monthly = recurring.reduce((a, r) => a + (r.frequency === 'anual' ? Math.round(r.amount / 12) : r.amount), 0)
   return (
@@ -531,12 +551,16 @@ function HousingCard({ open }: { open: (d: HomeDialogState) => void }) {
 // ---------------------------------------------------------------------------
 
 function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
-  const { transactions, subcategories } = useFinanceStore(useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories })))
+  const { transactions, subcategories, categories } = useFinanceStore(
+    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, categories: s.categories })),
+  )
   const month = useUIStore((s) => s.selectedMonth)
   const edit = useUIStore((s) => s.setEditingTransaction)
   const [showAll, setShowAll] = useState(false)
-  const p = purchaseSummary(transactions, month)
-  const subName = (id: string | null) => subcategories.find((x) => x.id === id)?.name ?? 'Casa'
+  const { homeCats } = useAreaCategories()
+  const p = purchaseSummary(transactions, month, homeCats)
+  const nameOf = (r: { subcategoryId: string | null; categoryId: string }) =>
+    subcategories.find((x) => x.id === r.subcategoryId)?.name ?? categories.find((c) => c.id === r.categoryId)?.name ?? 'Casa'
   const list = showAll ? p.items : p.items.slice(0, 6)
   const max = p.bySubcategory[0]?.total ?? 0
 
@@ -577,12 +601,12 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
               {p.bySubcategory.map((s) => (
                 <li key={s.subcategoryId} className="flex flex-col gap-1.5">
                   <div className="flex justify-between gap-2 text-sm">
-                    <span className="min-w-0 truncate">{subName(s.subcategoryId)}</span>
+                    <span className="min-w-0 truncate">{nameOf(s)}</span>
                     <span className="shrink-0 tabular-nums">
                       {formatMoney(s.total)} <span className="text-muted-foreground">· {formatMoney(Math.round(s.total / 12))}/mês</span>
                     </span>
                   </div>
-                  <Progress value={max ? s.total / max : 0} color="var(--info)" label={`${subName(s.subcategoryId)}: ${formatMoney(s.total)} em 12 meses`} />
+                  <Progress value={max ? s.total / max : 0} color="var(--info)" label={`${nameOf(s)}: ${formatMoney(s.total)} em 12 meses`} />
                 </li>
               ))}
             </ul>
@@ -609,7 +633,7 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
                         <span className="truncate">{t.description}</span>
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {formatDateShort(t.dueDate)} · {subName(t.subcategoryId)}
+                        {formatDateShort(t.dueDate)} · {nameOf(t)}
                       </span>
                       {t.sharedBillId && (
                         <span className="mt-1 flex">
@@ -643,8 +667,9 @@ export function HomePage() {
   const [dialog, setDialog] = useState<HomeDialogState>(null)
   const [tab, setTab] = useState<HomeTab>('contas')
   const today = todayISO()
+  const { homeCats } = useAreaCategories()
   // Contadores nas abas: só o que pede ação.
-  const overdue = homeMonth(transactions, month, today, 'contas').items.filter((t) => resolveStatus(t, today) === 'atrasado').length
+  const overdue = homeMonth(transactions, month, today, 'contas', homeCats).items.filter((t) => resolveStatus(t, today) === 'atrasado').length
   const careDue = maintenance.filter((r) => r.vehicleId === null && reminderStatus(r, 0, today).level !== 'ok').length
   const tabs: { key: HomeTab; label: string; count?: number }[] = [
     { key: 'contas', label: 'Contas', count: overdue },
@@ -705,7 +730,7 @@ export function HomePage() {
             <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 lg:items-start">
               <HousingCard open={setDialog} />
               <SharedBillsCard
-                filter={(b) => b.categoryId === HOME_CATEGORY_ID}
+                filter={(b) => homeCats.has(b.categoryId)}
                 title="Contas da casa divididas"
                 description="Aguardando: a pessoa ainda não aceitou. Aceita: as parcelas já entraram para os dois."
               />
