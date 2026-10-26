@@ -10,9 +10,11 @@ import { Affix, bodyClass, Choices, Field, FormActions, formClass, PaymentSelect
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { RoomField } from '@/components/home/room-field'
 import { useAreaCategories } from '@/hooks/use-areas'
-import { todayISO } from '@/lib/dates'
-import { formatMoney } from '@/lib/money'
+import { addMonthsISO, formatMonthLabel, monthOf, todayISO } from '@/lib/dates'
+import { formatMoney, splitCents } from '@/lib/money'
+import { MAX_INSTALLMENTS } from '@/lib/schemas'
 import { cents, date, money, nowISO, optionalMoney } from '@/lib/form-fields'
 import {
   BILL_ORDER,
@@ -26,7 +28,7 @@ import {
 } from '@/lib/home'
 import { createId } from '@/lib/utils'
 import { useFinanceStore } from '@/store/finance-store'
-import { PAYMENT_METHODS, type Cents, type ISODate, type MaintenanceReminder, type PaymentMethod, type RecurringCost, type Transaction } from '@/types/finance'
+import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type Cents, type ISODate, type MaintenanceReminder, type PaymentMethod, type RecurringCost, type Transaction } from '@/types/finance'
 
 export type HomeDialogState =
   | { kind: 'bill'; subcategoryId?: string }
@@ -42,7 +44,12 @@ export type HomeDialogState =
 const homeLinkFor = (categoryId: string, homeCats: ReadonlySet<string>) => (homeCats.has(categoryId) ? {} : { homeLink: true })
 
 function homeExpense(
-  fields: Pick<Transaction, 'description' | 'amount' | 'subcategoryId' | 'dueDate' | 'paymentMethod'> & { paid: boolean; categoryId?: string; homeLink?: boolean },
+  fields: Pick<Transaction, 'description' | 'amount' | 'subcategoryId' | 'dueDate' | 'paymentMethod'> & {
+    paid: boolean
+    categoryId?: string
+    homeLink?: boolean
+    roomId?: string | null
+  },
 ): Transaction {
   const { paid, categoryId = HOME_CATEGORY_ID, ...rest } = fields
   return {
@@ -408,16 +415,16 @@ function ReminderForm({ reminder, onDone }: { reminder?: MaintenanceReminder; on
   )
 }
 
-const completeSchema = z.object({ date, amount: optionalMoney, paymentMethod: z.enum(PAYMENT_METHODS) })
+const completeSchema = z.object({ date, amount: optionalMoney, paymentMethod: z.enum(PAYMENT_METHODS), roomId: z.string() })
 
 function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone: () => void }) {
   const complete = useFinanceStore((s) => s.completeReminder)
   const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(completeSchema),
-    defaultValues: { date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod },
+    defaultValues: { date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod, roomId: '' },
   })
-  const [paymentMethod, amount] = useWatch({ control, name: ['paymentMethod', 'amount'] })
+  const [paymentMethod, amount, roomId] = useWatch({ control, name: ['paymentMethod', 'amount', 'roomId'] })
   const e = formState.errors
 
   return (
@@ -451,6 +458,7 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
                 dueDate: v.date as ISODate,
                 paymentMethod: v.paymentMethod,
                 paid: true,
+                roomId: v.roomId || null,
               })
             : undefined,
         )
@@ -469,6 +477,7 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
           </Field>
         </div>
         <p className="-mt-3 text-xs text-muted-foreground">Com valor, o gasto entra em Lançamentos como Manutenção e reparos.</p>
+        <RoomField value={roomId} onChange={(x) => setValue('roomId', x)} />
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
@@ -488,7 +497,16 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
 
 /** Fixo da casa a partir de um vencimento. */
 function homeRecurring(
-  fields: { description: string; amount: number; subcategoryId: string | null; due: ISODate; paymentMethod: PaymentMethod; categoryId?: string; homeLink?: boolean },
+  fields: {
+    description: string
+    amount: number
+    subcategoryId: string | null
+    due: ISODate
+    paymentMethod: PaymentMethod
+    categoryId?: string
+    homeLink?: boolean
+    roomId?: string | null
+  },
   frequency: 'mensal' | 'anual',
 ): RecurringCost {
   const base = {
@@ -498,6 +516,7 @@ function homeRecurring(
     type: 'despesa' as const,
     categoryId: fields.categoryId ?? HOME_CATEGORY_ID,
     ...(fields.homeLink ? { homeLink: true } : {}),
+    ...(fields.roomId ? { roomId: fields.roomId } : {}),
     subcategoryId: fields.subcategoryId,
     paymentMethod: fields.paymentMethod,
     dueDay: Number(fields.due.slice(8, 10)),
@@ -787,19 +806,41 @@ function IptuForm({ onDone }: { onDone: () => void }) {
 // Compras da casa
 // ---------------------------------------------------------------------------
 
-const purchaseSchema = z.object({
-  categoryId: z.string().min(1),
-  subcategoryId: z.string(),
-  description: z.string().trim().min(2, 'O que foi comprado?').max(80, 'Máximo de 80 caracteres'),
-  amount: money('Informe o valor'),
-  date,
-  repeat: z.enum(['nao', 'mensal', 'anual']),
-  paymentMethod: z.enum(PAYMENT_METHODS),
-}).refine((v) => v.categoryId !== HOME_CATEGORY_ID || v.subcategoryId !== '', { path: ['subcategoryId'], message: 'Escolha o tipo' })
+const purchaseSchema = z
+  .object({
+    categoryId: z.string().min(1),
+    subcategoryId: z.string(),
+    description: z.string().trim().min(2, 'O que foi comprado?').max(80, 'Máximo de 80 caracteres'),
+    amount: money('Informe o valor'),
+    date,
+    repeat: z.enum(['nao', 'parcelada', 'mensal', 'anual']),
+    /** Parcelada: total de parcelas e a próxima a pagar (1 = compra nova; ex.: 4 = já pagou 3 de 8) */
+    installments: z.string().trim(),
+    next: z.string().trim(),
+    paymentMethod: z.enum(PAYMENT_METHODS),
+    /** Cômodo (opcional, `''` = nenhum) */
+    roomId: z.string(),
+  })
+  .refine((v) => v.categoryId !== HOME_CATEGORY_ID || v.subcategoryId !== '', { path: ['subcategoryId'], message: 'Escolha o tipo' })
+  .superRefine((v, ctx) => {
+    if (v.repeat !== 'parcelada') return
+    const n = Number(v.installments)
+    if (!wholeNumber(v.installments) || n < 2 || n > MAX_INSTALLMENTS) {
+      ctx.addIssue({ code: 'custom', path: ['installments'], message: `De 2 a ${MAX_INSTALLMENTS}` })
+    }
+    if (!wholeNumber(v.next) || Number(v.next) < 1 || Number(v.next) > n) {
+      ctx.addIssue({ code: 'custom', path: ['next'], message: wholeNumber(v.next) && Number(v.next) > n ? `Máximo ${n}` : 'Qual parcela vem agora' })
+    }
+  })
 
 function PurchaseForm({ onDone }: { onDone: () => void }) {
-  const { subcategories, addTransaction, addRecurringCost } = useFinanceStore(
-    useShallow((s) => ({ subcategories: s.subcategories, addTransaction: s.addTransaction, addRecurringCost: s.addRecurringCost })),
+  const { subcategories, addTransaction, addRecurringCost, addInstallmentPurchase } = useFinanceStore(
+    useShallow((s) => ({
+      subcategories: s.subcategories,
+      addTransaction: s.addTransaction,
+      addRecurringCost: s.addRecurringCost,
+      addInstallmentPurchase: s.addInstallmentPurchase,
+    })),
   )
   const { homeCats } = useAreaCategories()
   const homeOptions = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
@@ -814,31 +855,72 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
       description: '',
       amount: '',
       date: todayISO(),
-      repeat: 'nao' as 'nao' | 'mensal' | 'anual',
+      repeat: 'nao' as 'nao' | 'parcelada' | 'mensal' | 'anual',
+      installments: '',
+      next: '1',
       paymentMethod: 'pix' as PaymentMethod,
+      roomId: '',
     },
   })
-  const [categoryId, subcategoryId, repeat, paymentMethod] = useWatch({ control, name: ['categoryId', 'subcategoryId', 'repeat', 'paymentMethod'] })
+  const [categoryId, subcategoryId, repeat, paymentMethod, amount, installments, next, dateValue, roomId] = useWatch({
+    control,
+    name: ['categoryId', 'subcategoryId', 'repeat', 'paymentMethod', 'amount', 'installments', 'next', 'date', 'roomId'],
+  })
   const options =
     categoryId === HOME_CATEGORY_ID
       ? homeOptions
       : subcategories.filter((sc) => sc.categoryId === categoryId).map((sc) => ({ value: sc.id, label: sc.name }))
   const e = formState.errors
+  const parcelada = repeat === 'parcelada'
+  const ongoing = parcelada && Number(next) > 1
+  // Resumo: só as parcelas da próxima em diante entram (a próxima na data escolhida).
+  const preview = (() => {
+    const n = Number(installments)
+    const from = Number(next)
+    const value = cents(amount)
+    if (!parcelada || !wholeNumber(installments) || n < 2 || !wholeNumber(next) || from < 1 || from > n) return null
+    if (!(value > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return null
+    const parts = splitCents(value, n).slice(from - 1)
+    const last = parts.at(-1)!
+    const until = formatMonthLabel(monthOf(addMonthsISO(dateValue as ISODate, parts.length - 1)))
+    const each = `${parts.length}x de ${formatMoney(parts[0]!)}${last !== parts[0] ? ` (última ${formatMoney(last)})` : ''}`
+    return from > 1
+      ? `Lança da ${from}ª à ${n}ª: ${each}, faltam ${formatMoney(parts.reduce((a, b) => a + b, 0))}, até ${until}.`
+      : `${each}, até ${until}.`
+  })()
   return (
     <form
       noValidate
       className={formClass}
       onSubmit={handleSubmit(async (v) => {
+        const n = Number(v.installments)
+        // Valor é o total da compra; as parcelas antes da próxima já foram pagas e não entram.
+        const from = Number(v.next)
         if (sharing.on) {
-          const ok = await sharing.send({
-            title: v.description,
-            total: cents(v.amount) * (v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1),
-            installments: v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1,
-            recurring: v.repeat === 'mensal',
-            due: v.date as ISODate,
-            subcategoryId: v.subcategoryId || null,
-            categoryId: v.categoryId,
-          })
+          const ok = await sharing.send(
+            v.repeat === 'parcelada'
+              ? {
+                  title: v.description,
+                  total: splitCents(cents(v.amount), n)
+                    .slice(from - 1)
+                    .reduce((a, b) => a + b, 0),
+                  installments: n - from + 1,
+                  offset: from - 1,
+                  seriesTotal: n,
+                  due: v.date as ISODate,
+                  subcategoryId: v.subcategoryId || null,
+                  categoryId: v.categoryId,
+                }
+              : {
+                  title: v.description,
+                  total: cents(v.amount) * (v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1),
+                  installments: v.repeat === 'mensal' ? SHARED_FIXED_MONTHS : 1,
+                  recurring: v.repeat === 'mensal',
+                  due: v.date as ISODate,
+                  subcategoryId: v.subcategoryId || null,
+                  categoryId: v.categoryId,
+                },
+          )
           if (ok) onDone()
           return
         }
@@ -849,9 +931,19 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
           subcategoryId: v.subcategoryId || null,
           paymentMethod: v.paymentMethod,
           ...homeLinkFor(v.categoryId, homeCats),
+          roomId: v.roomId || null,
         }
         if (v.repeat === 'nao') addTransaction(homeExpense({ ...fields, dueDate: v.date as ISODate, paid: true }))
-        else addRecurringCost(homeRecurring({ ...fields, due: v.date as ISODate }, v.repeat), true)
+        else if (v.repeat === 'parcelada') {
+          addInstallmentPurchase({
+            ...fields,
+            totalAmount: cents(v.amount),
+            totalInstallments: n,
+            startAt: from,
+            firstDueDate: v.date as ISODate,
+            accountName: PAYMENT_METHOD_LABELS[v.paymentMethod],
+          })
+        } else addRecurringCost(homeRecurring({ ...fields, due: v.date as ISODate }, v.repeat), true)
         onDone()
       })}
     >
@@ -873,30 +965,50 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
         <Field id="p-desc" label="O que foi comprado" error={e.description?.message}>
           <Input id="p-desc" placeholder="Ex.: produtos de limpeza, panela, geladeira" aria-invalid={!!e.description} {...register('description')} />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field id="p-amount" label="Valor" error={e.amount?.message}>
-            <Affix before="R$">
-              <Input id="p-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
-            </Affix>
-          </Field>
-          <Field id="p-date" label="Data" error={e.date?.message}>
-            <Input id="p-date" type="date" aria-invalid={!!e.date} {...register('date')} />
-          </Field>
-        </div>
+        <RoomField value={roomId} onChange={(x) => setValue('roomId', x)} />
         <div className="flex flex-col gap-2">
-          <Label>Compra que se repete?</Label>
+          <Label>Como foi a compra?</Label>
           <Choices
-            label="Compra que se repete?"
+            label="Como foi a compra?"
             value={repeat}
             onChange={(x) => setValue('repeat', x)}
             options={[
-              { value: 'nao', label: 'Não' },
+              { value: 'nao', label: 'Uma vez' },
+              { value: 'parcelada', label: 'Parcelada' },
               { value: 'mensal', label: 'Todo mês' },
               { value: 'anual', label: 'Todo ano' },
             ]}
           />
-          <p className="text-xs text-muted-foreground">Ex.: produtos de limpeza todo mês. Compra parcelada: use Lançamentos &gt; Parcelado.</p>
+          {!parcelada && (
+            <p className="text-xs text-muted-foreground">
+              Ex.: produtos de limpeza todo mês. Parcelada vale também para compra já em andamento (ex.: balcão na 4ª de 8).
+            </p>
+          )}
         </div>
+        {parcelada && (
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-3">
+              <Field id="p-installments" label="Parcelas" error={e.installments?.message}>
+                <Input id="p-installments" inputMode="numeric" placeholder="Ex.: 8" aria-invalid={!!e.installments} {...register('installments')} />
+              </Field>
+              <Field id="p-next" label="Próxima a pagar" error={e.next?.message}>
+                <Input id="p-next" inputMode="numeric" aria-invalid={!!e.next} {...register('next')} />
+              </Field>
+            </div>
+            <p className="text-xs text-muted-foreground">Compra nova: deixe 1. Já pagou algumas? Ex.: está na 4ª de 8, coloque 4.</p>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="p-amount" label={parcelada ? 'Valor total' : 'Valor'} error={e.amount?.message}>
+            <Affix before="R$">
+              <Input id="p-amount" inputMode="decimal" className="pl-10" aria-invalid={!!e.amount} {...register('amount')} />
+            </Affix>
+          </Field>
+          <Field id="p-date" label={ongoing ? `${next}ª parcela vence` : parcelada ? '1ª parcela vence' : 'Data'} error={e.date?.message}>
+            <Input id="p-date" type="date" aria-invalid={!!e.date} {...register('date')} />
+          </Field>
+        </div>
+        {preview && <p className="-mt-2 rounded-xl bg-info-soft px-3 py-2 text-sm text-info">{preview}</p>}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(x) => setValue('paymentMethod', x)} />
@@ -906,11 +1018,19 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
             share={sharing.share}
             onChange={sharing.setShare}
             label="Dividir a compra"
-            note={repeat === 'mensal' ? fixedShareNote : repeat === 'anual' ? 'Compra anual: o convite vale só para esta vez.' : undefined}
+            note={
+              repeat === 'mensal'
+                ? fixedShareNote
+                : repeat === 'anual'
+                  ? 'Compra anual: o convite vale só para esta vez.'
+                  : ongoing
+                    ? 'O convite cobre só as parcelas que faltam.'
+                    : undefined
+            }
           />
         )}
       </div>
-      <FormActions submitLabel={sharing.on ? 'Enviar convite' : 'Salvar compra'} />
+      <FormActions submitLabel={sharing.on ? 'Enviar convite' : parcelada ? 'Gerar parcelas' : 'Salvar compra'} />
     </form>
   )
 }

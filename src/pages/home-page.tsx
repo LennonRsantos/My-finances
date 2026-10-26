@@ -34,8 +34,9 @@ import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
 import { formatDateShort, formatMonthLabel, todayISO } from '@/lib/dates'
 import { resolveStatus } from '@/lib/finance'
 import { COST_KIND_LABEL, costKindOf, costSplit, isHome } from '@/lib/areas'
-import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseSummary, type SharedHousing } from '@/lib/home'
+import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseSummary, roomSummary, type SharedHousing } from '@/lib/home'
 import { useAreaCategories } from '@/hooks/use-areas'
+import { useHomeRooms } from '@/hooks/use-home-rooms'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { reminderStatus, type ReminderLevel } from '@/lib/vehicle'
@@ -560,6 +561,11 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
   const [showAll, setShowAll] = useState(false)
   const { homeCats } = useAreaCategories()
   const p = purchaseSummary(transactions, month, homeCats)
+  const rooms = useHomeRooms()
+  const byRoom = roomSummary(transactions, month, rooms, homeCats)
+  const roomName = (id: string | null | undefined) => rooms.find((r) => r.id === id)?.name ?? null
+  // Só mostra "Por cômodo" quando algo já foi marcado com cômodo.
+  const roomMax = byRoom.some((r) => r.roomId !== null) ? Math.max(...byRoom.map((r) => r.total)) : 0
   const nameOf = (r: { subcategoryId: string | null; categoryId: string }) =>
     subcategories.find((x) => x.id === r.subcategoryId)?.name ?? categories.find((c) => c.id === r.categoryId)?.name ?? 'Casa'
   const list = showAll ? p.items : p.items.slice(0, 6)
@@ -580,7 +586,7 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
           Compra
         </Button>
       </CardHeader>
-      <CardContent className="grid gap-5 lg:grid-cols-2 lg:items-start lg:gap-8">
+      <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-2 lg:items-start lg:gap-8">
         <div className="flex flex-col gap-5">
           <div className="grid grid-cols-3 gap-2 text-center">
             {(
@@ -612,6 +618,32 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
               ))}
             </ul>
           )}
+
+          {roomMax > 0 && (
+            <div className="flex flex-col gap-3">
+              <h4 className="text-xs font-medium text-muted-foreground">Por cômodo (12 meses)</h4>
+              <ul className="flex flex-col gap-3" aria-label="Compras e reparos por cômodo nos últimos 12 meses">
+                {byRoom.map((r) => {
+                  const name = roomName(r.roomId) ?? 'Sem cômodo'
+                  return (
+                    <li key={r.roomId ?? 'sem-comodo'} className="flex flex-col gap-1.5">
+                      <div className="flex justify-between gap-2 text-sm">
+                        <span className="min-w-0 truncate">{name}</span>
+                        <span className="shrink-0 tabular-nums">{formatMoney(r.total)}</span>
+                      </div>
+                      <Progress value={r.total / roomMax} color="var(--info)" label={`${name}: ${formatMoney(r.total)} em 12 meses`} />
+                      <span className="truncate text-xs text-muted-foreground">
+                        {r.bySubcategory
+                          .slice(0, 2)
+                          .map((s) => `${nameOf(s)} ${formatMoney(s.total)}`)
+                          .join(' · ')}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col">
@@ -634,7 +666,8 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
                         <span className="truncate">{t.description}</span>
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {formatDateShort(t.dueDate)} · {nameOf(t)}
+                        {formatDateShort(t.dueDate)}
+                        {roomName(t.roomId) && ` · ${roomName(t.roomId)}`} · {nameOf(t)}
                       </span>
                       {t.sharedBillId && (
                         <span className="mt-1 flex">

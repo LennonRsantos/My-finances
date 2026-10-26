@@ -29,6 +29,7 @@ import { AccountDialog, type AccountDialogKind } from '@/components/settings/acc
 import { AutoAcceptDialog, HandleDialog } from '@/components/shared/shared-ui'
 import { AreaCategoriesCard } from '@/components/settings/area-categories'
 import { CategoryManager } from '@/components/settings/category-manager'
+import { HomeRoomsCard } from '@/components/settings/home-rooms'
 import { Button } from '@/components/ui/button'
 import { Affix } from '@/components/ui/form-kit'
 import { Card } from '@/components/ui/card'
@@ -581,6 +582,7 @@ export function SettingsSectionContent({ section }: { section: Section }) {
       {section === 'categorias' && (
         <div className="flex flex-col gap-4">
           <AreaCategoriesCard />
+          <HomeRoomsCard />
           <CategoryManager />
         </div>
       )}

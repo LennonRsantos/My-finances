@@ -213,6 +213,8 @@ export interface InstallmentPurchaseInput {
   costKind?: CostKind | null
   /** Cartão de crédito das parcelas (aba Cartão) */
   cardId?: string | null
+  /** Cômodo da casa (vai em todas as parcelas) */
+  roomId?: string | null
   /** Chave da linha do extrato importado (fica na 1ª parcela) */
   importKey?: string | null
 }
@@ -272,6 +274,7 @@ export function generateInstallments(input: InstallmentPurchaseInput): {
       ...(input.homeLink != null ? { homeLink: input.homeLink } : {}),
       ...(input.costKind ? { costKind: input.costKind } : {}),
       ...(input.cardId ? { cardId: input.cardId } : {}),
+      ...(input.roomId ? { roomId: input.roomId } : {}),
       ...(offset === 0 && input.importKey ? { importKey: input.importKey } : {}),
       createdAt,
     }

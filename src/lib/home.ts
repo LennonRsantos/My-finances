@@ -3,7 +3,7 @@
  * categorias marcadas, ou lançamentos vinculados um a um), comparação com os
  * meses anteriores e manutenção da casa (lembretes por tempo).
  */
-import type { Cents, Installment, ISODate, RecurringCost, Transaction, YearMonth } from '@/types/finance'
+import type { Cents, HomeRoom, Installment, ISODate, RecurringCost, Transaction, YearMonth } from '@/types/finance'
 import { costKindOf, DEFAULT_HOME_CATEGORIES, isHome } from './areas'
 import { lastNMonths, monthOf, shiftMonth } from './dates'
 import { resolveStatus } from './finance'
@@ -152,20 +152,62 @@ export function purchaseSummary(transactions: Transaction[], endMonth: YearMonth
     .filter(isHomePurchaseTx)
     .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
   const inYear = items.filter((t) => window.has(monthOf(t.dueDate)))
-  const bySub = new Map<string, { subcategoryId: string | null; categoryId: string; total: Cents }>()
-  for (const t of inYear) {
-    const key = t.subcategoryId ?? `cat:${t.categoryId}`
-    const cur = bySub.get(key) ?? { subcategoryId: t.subcategoryId, categoryId: t.categoryId, total: 0 }
-    bySub.set(key, { ...cur, total: cur.total + t.amount })
-  }
   const year = inYear.reduce((a, t) => a + t.amount, 0)
   return {
     thisMonth: items.filter((t) => monthOf(t.dueDate) === endMonth).reduce((a, t) => a + t.amount, 0),
     year,
     monthlyAverage: Math.round(year / 12),
-    bySubcategory: [...bySub.values()].sort((a, b) => b.total - a.total),
+    bySubcategory: totalsBySubcategory(inYear),
     items,
   }
+}
+
+/** Soma por subcategoria (sem subcategoria, pela categoria), do maior para o menor. */
+function totalsBySubcategory(list: Transaction[]): PurchaseSummary['bySubcategory'] {
+  const bySub = new Map<string, { subcategoryId: string | null; categoryId: string; total: Cents }>()
+  for (const t of list) {
+    const key = t.subcategoryId ?? `cat:${t.categoryId}`
+    const cur = bySub.get(key) ?? { subcategoryId: t.subcategoryId, categoryId: t.categoryId, total: 0 }
+    bySub.set(key, { ...cur, total: cur.total + t.amount })
+  }
+  return [...bySub.values()].sort((a, b) => b.total - a.total)
+}
+
+// ---------------------------------------------------------------------------
+// Cômodos
+// ---------------------------------------------------------------------------
+
+/** Cômodos que já vêm prontos; a pessoa cria, renomeia e exclui em Configurações. */
+export const DEFAULT_HOME_ROOMS: readonly HomeRoom[] = [
+  { id: 'room-cozinha', name: 'Cozinha' },
+  { id: 'room-sala', name: 'Sala' },
+  { id: 'room-quarto', name: 'Quarto' },
+  { id: 'room-banheiro', name: 'Banheiro' },
+  { id: 'room-servico', name: 'Área de serviço' },
+  { id: 'room-externa', name: 'Área externa' },
+  { id: 'room-escritorio', name: 'Escritório' },
+]
+
+export interface RoomTotal {
+  /** `null` = sem cômodo (ou cômodo excluído) */
+  roomId: string | null
+  total: Cents
+  bySubcategory: PurchaseSummary['bySubcategory']
+}
+
+/** Compras e reparos da casa dos últimos 12 meses por cômodo, do maior para o menor; sem cômodo por último. */
+export function roomSummary(transactions: Transaction[], endMonth: YearMonth, rooms: readonly HomeRoom[], cats: HomeCats = DEFAULT_CATS): RoomTotal[] {
+  const known = new Set(rooms.map((r) => r.id))
+  const window = new Set(lastNMonths(endMonth, 12))
+  const groups = new Map<string | null, Transaction[]>()
+  for (const t of homeExpenses(transactions, cats)) {
+    if (!isHomePurchaseTx(t) || !window.has(monthOf(t.dueDate))) continue
+    const room = t.roomId && known.has(t.roomId) ? t.roomId : null
+    groups.set(room, [...(groups.get(room) ?? []), t])
+  }
+  return [...groups]
+    .map(([roomId, list]) => ({ roomId, total: list.reduce((a, t) => a + t.amount, 0), bySubcategory: totalsBySubcategory(list) }))
+    .sort((a, b) => Number(a.roomId === null) - Number(b.roomId === null) || b.total - a.total)
 }
 
 // ---------------------------------------------------------------------------

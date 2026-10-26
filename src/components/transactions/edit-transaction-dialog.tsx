@@ -10,6 +10,7 @@ import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-
 import { SharedBillDialog } from '@/components/shared/shared-ui'
 import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
 import { LinkFields } from '@/components/transactions/link-fields'
+import { RoomField } from '@/components/home/room-field'
 import { ReceiptParts } from '@/components/transactions/receipt-parts'
 import { partEntries, resolveParts, spreadParts, type ReceiptPart } from '@/lib/receipt-parts'
 import { CardSelect } from '@/components/cards/card-select'
@@ -67,6 +68,8 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const [linkVehicle, setLinkVehicle] = useState<string | null>(t.vehicleId ?? null)
   const autoKind = t.recurringCostId || t.installment ? 'fixo' : 'variavel'
   const [kind, setKind] = useState(() => costKindOf(t))
+  // Cômodo só vale para gasto da Casa; sair da Casa limpa.
+  const [room, setRoom] = useState(t.roomId ?? '')
   const cardList = cards.filter((c) => c.active || c.id === t.cardId)
   const [cardSel, setCardSel] = useState<string | null>(() => t.cardId ?? (cardList.length === 1 ? cardList[0]!.id : null))
   const [cardMissing, setCardMissing] = useState(false)
@@ -145,6 +148,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
       payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
       notes: v.notes || undefined,
       cardId: !isIncome && v.paymentMethod === 'cartao_credito' ? cardSel : null,
+      ...(isIncome ? {} : { roomId: link === 'casa' && room ? room : null }),
       ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
     }
     if (resolved) {
@@ -365,6 +369,8 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
               autoKind={autoKind}
             />
           )}
+
+          {!isIncome && link === 'casa' && <RoomField value={room} onChange={setRoom} />}
 
           {!isIncome && (
             <PayToField

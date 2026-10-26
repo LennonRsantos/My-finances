@@ -148,6 +148,8 @@ export interface Transaction {
   costKind?: CostKind | null
   /** Cartão de crédito usado (aba Cartão) */
   cardId?: CreditCard['id'] | null
+  /** Cômodo da casa (Configurações > Cômodos); id desconhecido conta como sem cômodo */
+  roomId?: HomeRoom['id'] | null
   /** Linha do extrato que originou ou foi ligada a este lançamento (não importa duas vezes) */
   importKey?: string | null
   /** Hodômetro (km) no momento do gasto */
@@ -202,6 +204,7 @@ interface RecurringCostBase {
   homeLink?: boolean | null
   costKind?: CostKind | null
   cardId?: string | null
+  roomId?: string | null
   createdAt: string
 }
 
@@ -581,6 +584,13 @@ export interface UserSettings {
   autoAcceptFrom?: AutoAcceptPerson[]
   /** Plano da aba Metas; ausente = padrão (60/10/20/10, reserva de 6 meses, 200x) */
   goalPlan?: GoalPlan
+  /** Cômodos da casa para marcar compras e manutenções; ausente = padrão (Cozinha, Sala...) */
+  homeRooms?: HomeRoom[]
+}
+
+export interface HomeRoom {
+  id: string
+  name: string
 }
 
 /**

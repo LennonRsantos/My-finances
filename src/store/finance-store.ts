@@ -32,12 +32,13 @@ export type TransactionEdit = Pick<
   | 'costKind'
   | 'vehicleId'
   | 'cardId'
->
+> &
+  Partial<Pick<Transaction, 'roomId'>>
 
 /** Campos que se propagam para as próximas ocorrências da série. */
-const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId'] as const
-/** Vínculo com Casa/Veículo: passa para a série inteira, inclusive o que já passou. */
-const LINK_FIELDS = ['homeLink', 'costKind', 'vehicleId'] as const
+const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId', 'roomId'] as const
+/** Vínculo com Casa/Veículo e cômodo: passa para a série inteira, inclusive o que já passou. */
+const LINK_FIELDS = ['homeLink', 'costKind', 'vehicleId', 'roomId'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
