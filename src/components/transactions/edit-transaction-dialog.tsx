@@ -11,17 +11,20 @@ import { SharedBillDialog } from '@/components/shared/shared-ui'
 import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
 import { LinkFields } from '@/components/transactions/link-fields'
 import { RoomField } from '@/components/home/room-field'
+import { StoreField } from '@/components/home/store-field'
 import { ReceiptParts } from '@/components/transactions/receipt-parts'
 import { partEntries, resolveParts, spreadParts, type ReceiptPart } from '@/lib/receipt-parts'
 import { CardSelect } from '@/components/cards/card-select'
 import { useAreaCategories } from '@/hooks/use-areas'
 import { costKindOf, currentLink, linkPayload, type LinkTarget } from '@/lib/areas'
+import { isHomePurchaseTx } from '@/lib/home'
 import { Button } from '@/components/ui/button'
 import { Affix } from '@/components/ui/form-kit'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { addMonthsISO, formatDateShort, monthDiff, monthOf } from '@/lib/dates'
 import { fromCents, toCents } from '@/lib/money'
 import { parseMoneyInput } from '@/lib/schemas'
 import { cn, createId } from '@/lib/utils'
@@ -68,8 +71,9 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const [linkVehicle, setLinkVehicle] = useState<string | null>(t.vehicleId ?? null)
   const autoKind = t.recurringCostId || t.installment ? 'fixo' : 'variavel'
   const [kind, setKind] = useState(() => costKindOf(t))
-  // Cômodo só vale para gasto da Casa; sair da Casa limpa.
+  // Cômodo só vale para gasto da Casa e loja só para compra da Casa; sair limpa.
   const [room, setRoom] = useState(t.roomId ?? '')
+  const [store, setStore] = useState(t.storeId ?? '')
   const cardList = cards.filter((c) => c.active || c.id === t.cardId)
   const [cardSel, setCardSel] = useState<string | null>(() => t.cardId ?? (cardList.length === 1 ? cardList[0]!.id : null))
   const [cardMissing, setCardMissing] = useState(false)
@@ -112,7 +116,29 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
     },
   })
 
-  const [categoryId, amount, dueDateValue] = useWatch({ control, name: ['categoryId', 'amount', 'dueDate'] })
+  const [categoryId, subcategoryId, amount, dueDateValue] = useWatch({ control, name: ['categoryId', 'subcategoryId', 'amount', 'dueDate'] })
+  const homePurchase = !isIncome && link === 'casa' && isHomePurchaseTx({ ...t, categoryId, subcategoryId, costKind: kind })
+  // Parcela que muda de mês empurra as seguintes (ver updateTransaction); conta dividida não.
+  const following = useFinanceStore(
+    useShallow((s) =>
+      t.installment && !t.sharedBillId
+        ? s.transactions
+            .filter((x) => x.installment?.installmentId === t.installment!.installmentId && x.installment.number > t.installment!.number)
+            .sort((a, b) => a.installment!.number - b.installment!.number)
+        : [],
+    ),
+  )
+  const dateShift =
+    following.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(dueDateValue) ? monthDiff(monthOf(t.dueDate), monthOf(dueDateValue as ISODate)) : 0
+  const shiftNote = (() => {
+    if (!dateShift) return null
+    const n = following.length
+    const months = `${Math.abs(dateShift)} ${Math.abs(dateShift) === 1 ? 'mês' : 'meses'}`
+    const verb = (dateShift > 0 ? 'anda' : 'volta') + (n === 1 ? '' : 'm')
+    const first = following[0]!
+    const who = n === 1 ? `A ${first.installment!.number}ª parcela` : `As ${n} parcelas seguintes`
+    return `${who} também ${verb} ${months} (a ${first.installment!.number}ª vai para ${formatDateShort(addMonthsISO(first.dueDate, dateShift))}).`
+  })()
   const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
   const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
   const payTo = payToRaw.trim()
@@ -148,7 +174,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
       payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
       notes: v.notes || undefined,
       cardId: !isIncome && v.paymentMethod === 'cartao_credito' ? cardSel : null,
-      ...(isIncome ? {} : { roomId: link === 'casa' && room ? room : null }),
+      ...(isIncome ? {} : { roomId: link === 'casa' && room ? room : null, storeId: homePurchase && store ? store : null }),
       ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
     }
     if (resolved) {
@@ -318,6 +344,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
                 <Label htmlFor="edit-date">{isIncome ? 'Data de recebimento' : 'Data de vencimento'}</Label>
                 <Input id="edit-date" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
                 <FieldError message={errors.dueDate?.message} />
+                {shiftNote && <p className="text-xs text-muted-foreground">{shiftNote}</p>}
               </div>
               {!isIncome && (
                 <div className="flex flex-col gap-2">
@@ -371,6 +398,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
           )}
 
           {!isIncome && link === 'casa' && <RoomField value={room} onChange={setRoom} />}
+          {homePurchase && <StoreField value={store} onChange={setStore} />}
 
           {!isIncome && (
             <PayToField

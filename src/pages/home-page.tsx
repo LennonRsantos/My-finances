@@ -25,7 +25,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { MonthSelector } from '@/components/dashboard/month-selector'
 import { HomeDialogs, type HomeDialogState } from '@/components/home/home-dialogs'
 import { RecurringDialog, RecurringRows } from '@/components/recurring/recurring-dialog'
-import { SharedBadge } from '@/components/shared/share-fields'
+import { SharedBadge, SharedMark } from '@/components/shared/share-fields'
 import { SharedBillsCard } from '@/components/shared/shared-ui'
 import { UndoReminderButton } from '@/components/shared/undo-reminder-button'
 import { Button } from '@/components/ui/button'
@@ -34,13 +34,14 @@ import { Badge, EmptyState, Progress, type Tone } from '@/components/ui/misc'
 import { formatDateShort, formatMonthLabel, todayISO } from '@/lib/dates'
 import { resolveStatus } from '@/lib/finance'
 import { COST_KIND_LABEL, costKindOf, costSplit, isHome } from '@/lib/areas'
-import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseSummary, roomSummary, type SharedHousing } from '@/lib/home'
+import { compareBills, HOME_CATEGORY_ID, homeMonth, housingStatus, purchaseGroups, purchasesBy, purchaseSummary, type GroupTotal, type PurchaseGroup, type SharedHousing } from '@/lib/home'
 import { useAreaCategories } from '@/hooks/use-areas'
 import { useHomeRooms } from '@/hooks/use-home-rooms'
+import { useHomeStores } from '@/hooks/use-home-stores'
 import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { reminderStatus, type ReminderLevel } from '@/lib/vehicle'
-import { useFinanceStore } from '@/store/finance-store'
+import { baseDescription, useFinanceStore } from '@/store/finance-store'
 import { useUIStore } from '@/store/ui-store'
 import type { RecurringCost, TransactionStatus } from '@/types/finance'
 import { PageHeader } from '@/components/layout/page-header'
@@ -552,9 +553,87 @@ function HousingCard({ open }: { open: (d: HomeDialogState) => void }) {
 // Compras da casa
 // ---------------------------------------------------------------------------
 
+/** Compras de 12 meses por cômodo ou loja; só aparece quando algo já foi marcado. */
+function GroupList({
+  title,
+  label,
+  rows,
+  nameOf,
+  none,
+  subName,
+}: {
+  title: string
+  label: string
+  rows: GroupTotal[]
+  nameOf: (id: string | null) => string | null
+  none: string
+  subName: (s: GroupTotal['bySubcategory'][number]) => string
+}) {
+  if (!rows.some((r) => r.id !== null)) return null
+  const max = Math.max(...rows.map((r) => r.total))
+  return (
+    <div className="flex flex-col gap-3">
+      <h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
+      <ul className="flex flex-col gap-3" aria-label={label}>
+        {rows.map((r) => {
+          const name = nameOf(r.id) ?? none
+          return (
+            <li key={r.id ?? 'nenhum'} className="flex flex-col gap-1.5">
+              <div className="flex justify-between gap-2 text-sm">
+                <span className="min-w-0 truncate">{name}</span>
+                <span className="shrink-0 tabular-nums">{formatMoney(r.total)}</span>
+              </div>
+              <Progress value={r.total / max} color="var(--info)" label={`${name}: ${formatMoney(r.total)} em 12 meses`} />
+              <span className="truncate text-xs text-muted-foreground">
+                {r.bySubcategory
+                  .slice(0, 2)
+                  .map((s) => `${subName(s)} ${formatMoney(s.total)}`)
+                  .join(' · ')}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+/** Uma compra na lista: nome, onde/como e, à direita, quanto custou e em que pé está. */
+function PurchaseRow({ g, meta, status, onOpen }: { g: PurchaseGroup; meta: string; status: string; onOpen: () => void }) {
+  const name = baseDescription(g.main)
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Editar compra ${name}`}
+        className="group flex w-full items-center gap-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+            <span className="truncate">{name}</span>
+            {g.sharedBillId && <SharedMark billId={g.sharedBillId} fallback={g.sharedWith} />}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">{meta}</span>
+          {g.kind === 'parcelada' && (
+            <span className="mt-1.5 block h-1 w-full max-w-40 overflow-hidden rounded-full bg-muted" aria-hidden>
+              <span className="block h-full rounded-full bg-[var(--info)]" style={{ width: `${(g.paid / g.count) * 100}%` }} />
+            </span>
+          )}
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          <span className="text-sm font-semibold tabular-nums">{formatMoney(g.total)}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{status}</span>
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden />
+      </button>
+    </li>
+  )
+}
+
 function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
-  const { transactions, subcategories, categories } = useFinanceStore(
-    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, categories: s.categories })),
+  const { transactions, subcategories, categories, recurringCosts } = useFinanceStore(
+    useShallow((s) => ({ transactions: s.transactions, subcategories: s.subcategories, categories: s.categories, recurringCosts: s.recurringCosts })),
   )
   const month = useUIStore((s) => s.selectedMonth)
   const edit = useUIStore((s) => s.setEditingTransaction)
@@ -562,13 +641,19 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
   const { homeCats } = useAreaCategories()
   const p = purchaseSummary(transactions, month, homeCats)
   const rooms = useHomeRooms()
-  const byRoom = roomSummary(transactions, month, rooms, homeCats)
+  const stores = useHomeStores()
   const roomName = (id: string | null | undefined) => rooms.find((r) => r.id === id)?.name ?? null
-  // Só mostra "Por cômodo" quando algo já foi marcado com cômodo.
-  const roomMax = byRoom.some((r) => r.roomId !== null) ? Math.max(...byRoom.map((r) => r.total)) : 0
+  const storeName = (id: string | null | undefined) => stores.find((s) => s.id === id)?.name ?? null
   const nameOf = (r: { subcategoryId: string | null; categoryId: string }) =>
     subcategories.find((x) => x.id === r.subcategoryId)?.name ?? categories.find((c) => c.id === r.categoryId)?.name ?? 'Casa'
-  const list = showAll ? p.items : p.items.slice(0, 6)
+  const groups = purchaseGroups(p.items, todayISO())
+  const list = showAll ? groups : groups.slice(0, 6)
+  const metaOf = (t: PurchaseGroup['main']) => [nameOf(t), roomName(t.roomId), storeName(t.storeId)].filter(Boolean).join(' · ')
+  const statusOf = (g: PurchaseGroup) => {
+    if (g.kind === 'parcelada') return g.paid === g.count ? `${g.count}x · quitada` : `${g.paid} de ${g.count} pagas`
+    if (g.kind === 'fixa') return recurringCosts.find((r) => r.id === g.main.recurringCostId)?.frequency === 'anual' ? 'Todo ano' : 'Todo mês'
+    return formatDateShort(g.date)
+  }
   const max = p.bySubcategory[0]?.total ?? 0
 
   return (
@@ -619,72 +704,38 @@ function PurchasesCard({ open }: { open: (d: HomeDialogState) => void }) {
             </ul>
           )}
 
-          {roomMax > 0 && (
-            <div className="flex flex-col gap-3">
-              <h4 className="text-xs font-medium text-muted-foreground">Por cômodo (12 meses)</h4>
-              <ul className="flex flex-col gap-3" aria-label="Compras e reparos por cômodo nos últimos 12 meses">
-                {byRoom.map((r) => {
-                  const name = roomName(r.roomId) ?? 'Sem cômodo'
-                  return (
-                    <li key={r.roomId ?? 'sem-comodo'} className="flex flex-col gap-1.5">
-                      <div className="flex justify-between gap-2 text-sm">
-                        <span className="min-w-0 truncate">{name}</span>
-                        <span className="shrink-0 tabular-nums">{formatMoney(r.total)}</span>
-                      </div>
-                      <Progress value={r.total / roomMax} color="var(--info)" label={`${name}: ${formatMoney(r.total)} em 12 meses`} />
-                      <span className="truncate text-xs text-muted-foreground">
-                        {r.bySubcategory
-                          .slice(0, 2)
-                          .map((s) => `${nameOf(s)} ${formatMoney(s.total)}`)
-                          .join(' · ')}
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )}
+          <GroupList
+            title="Por cômodo (12 meses)"
+            label="Compras e reparos por cômodo nos últimos 12 meses"
+            rows={purchasesBy('roomId', transactions, month, rooms, homeCats)}
+            nameOf={roomName}
+            none="Sem cômodo"
+            subName={nameOf}
+          />
+          <GroupList
+            title="Por loja (12 meses)"
+            label="Compras e reparos por loja nos últimos 12 meses"
+            rows={purchasesBy('storeId', transactions, month, stores, homeCats)}
+            nameOf={storeName}
+            none="Sem loja"
+            subName={nameOf}
+          />
         </div>
 
         <div className="flex flex-col">
           <h4 className="pb-1 text-xs font-medium text-muted-foreground">Últimas compras</h4>
-          {p.items.length === 0 ? (
+          {groups.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma compra para a casa ainda.</p>
           ) : (
             <ul className="divide-y">
-              {list.map((t) => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    onClick={() => edit(t.id)}
-                    aria-label={`Editar compra ${t.description}`}
-                    className="flex w-full items-center gap-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-sm font-medium">
-                        {t.recurringCostId && <Repeat className="size-3.5 shrink-0 text-muted-foreground" aria-label="Repete" />}
-                        <span className="truncate">{t.description}</span>
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {formatDateShort(t.dueDate)}
-                        {roomName(t.roomId) && ` · ${roomName(t.roomId)}`} · {nameOf(t)}
-                      </span>
-                      {t.sharedBillId && (
-                        <span className="mt-1 flex">
-                          <SharedBadge billId={t.sharedBillId} fallback={t.sharedWith} />
-                        </span>
-                      )}
-                    </span>
-                    <span className="shrink-0 text-sm font-semibold tabular-nums">{formatMoney(t.amount)}</span>
-                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                  </button>
-                </li>
+              {list.map((g) => (
+                <PurchaseRow key={g.key} g={g} meta={metaOf(g.main)} status={statusOf(g)} onOpen={() => edit(g.main.id)} />
               ))}
             </ul>
           )}
-          {p.items.length > 6 && (
+          {groups.length > 6 && (
             <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? 'Mostrar menos' : `Ver todas (${p.items.length})`}
+              {showAll ? 'Mostrar menos' : `Ver todas (${groups.length})`}
             </Button>
           )}
         </div>

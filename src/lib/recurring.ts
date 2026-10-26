@@ -43,6 +43,7 @@ export function occurrenceFor(rc: RecurringCost, month: YearMonth, createdAt = n
     ...(rc.costKind ? { costKind: rc.costKind } : {}),
     ...(rc.cardId ? { cardId: rc.cardId } : {}),
     ...(rc.roomId ? { roomId: rc.roomId } : {}),
+    ...(rc.storeId ? { storeId: rc.storeId } : {}),
     createdAt,
   }
 }

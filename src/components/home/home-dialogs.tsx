@@ -11,6 +11,7 @@ import { FieldError, Input, Label } from '@/components/ui/input'
 import { Switch } from '@/components/ui/misc'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RoomField } from '@/components/home/room-field'
+import { StoreField } from '@/components/home/store-field'
 import { useAreaCategories } from '@/hooks/use-areas'
 import { addMonthsISO, formatMonthLabel, monthOf, todayISO } from '@/lib/dates'
 import { formatMoney, splitCents } from '@/lib/money'
@@ -23,7 +24,8 @@ import {
   HOME_MAINTENANCE_SUBCATEGORY_ID,
   HOME_REMINDERS,
   IPTU_SUBCATEGORY_ID,
-  PURCHASE_SUBCATEGORIES,
+  isHomePurchaseId,
+  purchaseTypes,
   RENT_SUBCATEGORY_ID,
 } from '@/lib/home'
 import { createId } from '@/lib/utils'
@@ -49,6 +51,7 @@ function homeExpense(
     categoryId?: string
     homeLink?: boolean
     roomId?: string | null
+    storeId?: string | null
   },
 ): Transaction {
   const { paid, categoryId = HOME_CATEGORY_ID, ...rest } = fields
@@ -161,7 +164,7 @@ function BillForm({ subcategoryId: initial, onDone }: { subcategoryId?: string; 
   )
   const { homeCats } = useAreaCategories()
   const homeOptions = subcategories
-    .filter((sc) => sc.categoryId === HOME_CATEGORY_ID && !PURCHASE_SUBCATEGORIES.includes(sc.id) && sc.id !== FINANCING_SUBCATEGORY_ID)
+    .filter((sc) => sc.categoryId === HOME_CATEGORY_ID && !isHomePurchaseId(sc.id) && sc.id !== FINANCING_SUBCATEGORY_ID)
     .sort((a, b) => {
       const ia = BILL_ORDER.indexOf(a.id)
       const ib = BILL_ORDER.indexOf(b.id)
@@ -415,16 +418,16 @@ function ReminderForm({ reminder, onDone }: { reminder?: MaintenanceReminder; on
   )
 }
 
-const completeSchema = z.object({ date, amount: optionalMoney, paymentMethod: z.enum(PAYMENT_METHODS), roomId: z.string() })
+const completeSchema = z.object({ date, amount: optionalMoney, paymentMethod: z.enum(PAYMENT_METHODS), roomId: z.string(), storeId: z.string() })
 
 function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onDone: () => void }) {
   const complete = useFinanceStore((s) => s.completeReminder)
   const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(completeSchema),
-    defaultValues: { date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod, roomId: '' },
+    defaultValues: { date: todayISO(), amount: '', paymentMethod: 'pix' as PaymentMethod, roomId: '', storeId: '' },
   })
-  const [paymentMethod, amount, roomId] = useWatch({ control, name: ['paymentMethod', 'amount', 'roomId'] })
+  const [paymentMethod, amount, roomId, storeId] = useWatch({ control, name: ['paymentMethod', 'amount', 'roomId', 'storeId'] })
   const e = formState.errors
 
   return (
@@ -459,6 +462,7 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
                 paymentMethod: v.paymentMethod,
                 paid: true,
                 roomId: v.roomId || null,
+                storeId: v.storeId || null,
               })
             : undefined,
         )
@@ -478,6 +482,7 @@ function CompleteForm({ reminder, onDone }: { reminder: MaintenanceReminder; onD
         </div>
         <p className="-mt-3 text-xs text-muted-foreground">Com valor, o gasto entra em Lançamentos como Manutenção e reparos.</p>
         <RoomField value={roomId} onChange={(x) => setValue('roomId', x)} />
+        <StoreField value={storeId} onChange={(x) => setValue('storeId', x)} />
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           <Label>Pagamento</Label>
           <PaymentSelect value={paymentMethod} onChange={(v) => setValue('paymentMethod', v)} />
@@ -506,6 +511,7 @@ function homeRecurring(
     categoryId?: string
     homeLink?: boolean
     roomId?: string | null
+    storeId?: string | null
   },
   frequency: 'mensal' | 'anual',
 ): RecurringCost {
@@ -517,6 +523,7 @@ function homeRecurring(
     categoryId: fields.categoryId ?? HOME_CATEGORY_ID,
     ...(fields.homeLink ? { homeLink: true } : {}),
     ...(fields.roomId ? { roomId: fields.roomId } : {}),
+    ...(fields.storeId ? { storeId: fields.storeId } : {}),
     subcategoryId: fields.subcategoryId,
     paymentMethod: fields.paymentMethod,
     dueDay: Number(fields.due.slice(8, 10)),
@@ -818,8 +825,9 @@ const purchaseSchema = z
     installments: z.string().trim(),
     next: z.string().trim(),
     paymentMethod: z.enum(PAYMENT_METHODS),
-    /** Cômodo (opcional, `''` = nenhum) */
+    /** Cômodo e loja (opcionais, `''` = nenhum) */
     roomId: z.string(),
+    storeId: z.string(),
   })
   .refine((v) => v.categoryId !== HOME_CATEGORY_ID || v.subcategoryId !== '', { path: ['subcategoryId'], message: 'Escolha o tipo' })
   .superRefine((v, ctx) => {
@@ -843,9 +851,7 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
     })),
   )
   const { homeCats } = useAreaCategories()
-  const homeOptions = PURCHASE_SUBCATEGORIES.map((id) => subcategories.find((sc) => sc.id === id))
-    .filter((sc): sc is NonNullable<typeof sc> => !!sc)
-    .map((sc) => ({ value: sc.id, label: sc.name }))
+  const homeOptions = purchaseTypes(subcategories).map((sc) => ({ value: sc.id, label: sc.name }))
   const sharing = useHomeShare()
   const { register, handleSubmit, control, setValue, formState } = useForm({
     resolver: zodResolver(purchaseSchema),
@@ -860,11 +866,12 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
       next: '1',
       paymentMethod: 'pix' as PaymentMethod,
       roomId: '',
+      storeId: '',
     },
   })
-  const [categoryId, subcategoryId, repeat, paymentMethod, amount, installments, next, dateValue, roomId] = useWatch({
+  const [categoryId, subcategoryId, repeat, paymentMethod, amount, installments, next, dateValue, roomId, storeId] = useWatch({
     control,
-    name: ['categoryId', 'subcategoryId', 'repeat', 'paymentMethod', 'amount', 'installments', 'next', 'date', 'roomId'],
+    name: ['categoryId', 'subcategoryId', 'repeat', 'paymentMethod', 'amount', 'installments', 'next', 'date', 'roomId', 'storeId'],
   })
   const options =
     categoryId === HOME_CATEGORY_ID
@@ -932,6 +939,7 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
           paymentMethod: v.paymentMethod,
           ...homeLinkFor(v.categoryId, homeCats),
           roomId: v.roomId || null,
+          storeId: v.storeId || null,
         }
         if (v.repeat === 'nao') addTransaction(homeExpense({ ...fields, dueDate: v.date as ISODate, paid: true }))
         else if (v.repeat === 'parcelada') {
@@ -960,12 +968,14 @@ function PurchaseForm({ onDone }: { onDone: () => void }) {
             <Label>{categoryId === HOME_CATEGORY_ID ? 'Tipo' : 'Subcategoria (opcional)'}</Label>
             <Choices label="Tipo" value={subcategoryId} onChange={(x) => setValue('subcategoryId', x, { shouldValidate: true })} options={options} />
             <FieldError message={e.subcategoryId?.message} />
+            {categoryId === HOME_CATEGORY_ID && <p className="text-xs text-muted-foreground">Crie ou renomeie tipos em Configurações &gt; Casa.</p>}
           </div>
         )}
         <Field id="p-desc" label="O que foi comprado" error={e.description?.message}>
           <Input id="p-desc" placeholder="Ex.: produtos de limpeza, panela, geladeira" aria-invalid={!!e.description} {...register('description')} />
         </Field>
         <RoomField value={roomId} onChange={(x) => setValue('roomId', x)} />
+        <StoreField value={storeId} onChange={(x) => setValue('storeId', x)} />
         <div className="flex flex-col gap-2">
           <Label>Como foi a compra?</Label>
           <Choices

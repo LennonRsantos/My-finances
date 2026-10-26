@@ -3,7 +3,7 @@
  * chegar no valor até o prazo. O dinheiro da meta não é lançamento.
  */
 import type { Cents, Goal, ISODate, YearMonth } from '@/types/finance'
-import { monthOf } from './dates'
+import { monthDiff, monthOf } from './dates'
 
 export type GoalStatus = 'concluida' | 'sem_prazo' | 'no_ritmo' | 'abaixo' | 'vencida'
 
@@ -21,11 +21,7 @@ export interface GoalProgress {
 }
 
 /** Meses de `from` até `to`, contando os dois (jan→jan = 1). */
-function monthsBetween(from: YearMonth, to: YearMonth) {
-  const [y1, m1] = from.split('-').map(Number)
-  const [y2, m2] = to.split('-').map(Number)
-  return (y2! - y1!) * 12 + (m2! - m1!) + 1
-}
+const monthsBetween = (from: YearMonth, to: YearMonth) => monthDiff(from, to) + 1
 
 export function goalProgress(goal: Goal, today: ISODate): GoalProgress {
   const saved = goal.deposits.reduce((a, d) => a + d.amount, 0)

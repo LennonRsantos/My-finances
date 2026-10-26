@@ -5,7 +5,7 @@ import type { BackupData } from '@/lib/backup'
 import { buildMockTransactions, missingDefaults, mockCategories, mockSubcategories } from '@/data/mock'
 import * as cloud from '@/lib/cloud'
 import { generateInstallments, type InstallmentPurchaseInput } from '@/lib/finance'
-import { addDaysISO, addMonthsISO, monthOf, shiftMonth, todayISO } from '@/lib/dates'
+import { addDaysISO, addMonthsISO, monthDiff, monthOf, shiftMonth, todayISO } from '@/lib/dates'
 import { createId } from '@/lib/utils'
 import { occurrenceFor, pendingOccurrences } from '@/lib/recurring'
 import { currentUid, reportSyncError } from './auth-store'
@@ -33,12 +33,12 @@ export type TransactionEdit = Pick<
   | 'vehicleId'
   | 'cardId'
 > &
-  Partial<Pick<Transaction, 'roomId'>>
+  Partial<Pick<Transaction, 'roomId' | 'storeId'>>
 
 /** Campos que se propagam para as próximas ocorrências da série. */
-const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId', 'roomId'] as const
-/** Vínculo com Casa/Veículo e cômodo: passa para a série inteira, inclusive o que já passou. */
-const LINK_FIELDS = ['homeLink', 'costKind', 'vehicleId', 'roomId'] as const
+const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId', 'roomId', 'storeId'] as const
+/** Vínculo com Casa/Veículo, cômodo e loja: passa para a série inteira, inclusive o que já passou. */
+const LINK_FIELDS = ['homeLink', 'costKind', 'vehicleId', 'roomId', 'storeId'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
@@ -158,8 +158,8 @@ interface FinanceState extends FinanceData {
    */
   deleteCategory: (id: Category['id'], moveTo: Category['id'] | null) => void
   saveSubcategory: (s: Subcategory) => void
-  /** Exclui subcategoria; quem usava fica só com a categoria. */
-  deleteSubcategory: (id: Subcategory['id']) => void
+  /** Exclui subcategoria; quem usava fica só com a categoria, ou passa para `moveTo`. */
+  deleteSubcategory: (id: Subcategory['id'], moveTo?: Subcategory['id'] | null) => void
   /** Cria ou atualiza dívida do plano de quitação. */
   saveDebt: (d: Debt) => void
   removeDebt: (id: Debt['id']) => void
@@ -416,30 +416,31 @@ export const useFinanceStore = create<FinanceState>()(
           if (!t) return
           const base = patch.description
           const upserts: cloud.DocWrite[] = [{ name: 'transactions', data: { ...t, ...patch, description: withSuffix(base, t) } }]
+          // Irmãs alteradas (série e/ou data), uma escrita por parcela.
+          const changed = new Map<string, Transaction>()
+          const change = (x: Transaction, data: Partial<Transaction>) => changed.set(x.id, { ...(changed.get(x.id) ?? x), ...data })
+          const siblings = transactions.filter(
+            (x) =>
+              x.id !== t.id &&
+              ((t.installment && x.installment?.installmentId === t.installment.installmentId) ||
+                (t.recurringCostId && x.recurringCostId === t.recurringCostId)),
+          )
+          const inst = t.installment && installments.find((i) => i.id === t.installment?.installmentId)
+          let instData: Installment | null = null
 
           if (scope === 'future') {
             const series = pick(patch, SERIES_FIELDS)
             // Vínculo Casa/Veículo é da compra toda: vale também para parcelas/meses anteriores e pagos.
             const link = 'vehicleId' in patch ? pick(patch, LINK_FIELDS) : null
-            const siblings = transactions.filter(
-              (x) =>
-                x.id !== t.id &&
-                ((t.installment && x.installment?.installmentId === t.installment.installmentId) ||
-                  (t.recurringCostId && x.recurringCostId === t.recurringCostId)),
-            )
             for (const x of siblings) {
               if (x.status !== 'pago' && x.dueDate >= t.dueDate) {
-                upserts.push({ name: 'transactions', data: { ...x, ...series, description: withSuffix(base, x) } })
+                change(x, { ...series, description: withSuffix(base, x) })
               } else if (link && LINK_FIELDS.some((k) => (x[k] ?? null) !== (link[k] ?? null))) {
-                upserts.push({ name: 'transactions', data: { ...x, ...link } })
+                change(x, link)
               }
             }
-            const inst = t.installment && installments.find((i) => i.id === t.installment?.installmentId)
             if (inst) {
-              upserts.push({
-                name: 'installments',
-                data: { ...inst, description: base, categoryId: patch.categoryId, subcategoryId: patch.subcategoryId, paymentMethod: patch.paymentMethod ?? inst.paymentMethod, payTo: patch.payTo ?? null, payToUid: patch.payToUid ?? null, payToHandle: patch.payToHandle ?? null },
-              })
+              instData = { ...inst, description: base, categoryId: patch.categoryId, subcategoryId: patch.subcategoryId, paymentMethod: patch.paymentMethod ?? inst.paymentMethod, payTo: patch.payTo ?? null, payToUid: patch.payToUid ?? null, payToHandle: patch.payToHandle ?? null }
             }
             const rc = t.recurringCostId && recurringCosts.find((r) => r.id === t.recurringCostId)
             if (rc) {
@@ -447,6 +448,19 @@ export const useFinanceStore = create<FinanceState>()(
               upserts.push({ name: 'recurringCosts', data: { ...rc, ...series, description: base } })
             }
           }
+
+          // Parcela mudou de mês: as seguintes andam junto (cada uma mantém o dia). Conta dividida tem as datas da outra pessoa.
+          const shift = t.installment && !t.sharedBillId ? monthDiff(monthOf(t.dueDate), monthOf(patch.dueDate)) : 0
+          if (shift && t.installment) {
+            const from = t.installment.number
+            for (const x of siblings) {
+              if ((x.installment?.number ?? 0) > from) change(x, { dueDate: addMonthsISO(x.dueDate, shift) })
+            }
+            if (inst && from === 1) instData = { ...(instData ?? inst), startDate: patch.dueDate }
+          }
+
+          for (const data of changed.values()) upserts.push({ name: 'transactions', data })
+          if (instData) upserts.push({ name: 'installments', data: instData })
           commit({ upserts })
         },
 
@@ -606,9 +620,9 @@ export const useFinanceStore = create<FinanceState>()(
 
         saveSubcategory: (data) => commit({ upserts: [{ name: 'subcategories', data }] }),
 
-        deleteSubcategory: (id) => {
+        deleteSubcategory: (id, moveTo = null) => {
           const { transactions, recurringCosts, installments } = get()
-          const clear = <T extends { subcategoryId: string | null }>(x: T): T => ({ ...x, subcategoryId: null })
+          const clear = <T extends { subcategoryId: string | null }>(x: T): T => ({ ...x, subcategoryId: moveTo })
           commit({
             upserts: [
               ...txWrites(transactions.filter((t) => t.subcategoryId === id).map(clear)),

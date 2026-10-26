@@ -53,6 +53,13 @@ export function addMonthsISO(date: ISODate, months: number): ISODate {
   return toISODate(addMonths(parseDate(date), months))
 }
 
+/** Quantos meses de `from` até `to` (jan→mar = 2; mar→jan = -2). */
+export function monthDiff(from: YearMonth, to: YearMonth): number {
+  const [y1, m1] = from.split('-').map(Number)
+  const [y2, m2] = to.split('-').map(Number)
+  return (y2! - y1!) * 12 + (m2! - m1!)
+}
+
 /** Data com dia fixo dentro do mês, limitada ao último dia. */
 export function dateInMonth(month: YearMonth, day: number): ISODate {
   const d = yearMonthToDate(month)

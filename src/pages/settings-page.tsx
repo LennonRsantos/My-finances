@@ -5,6 +5,7 @@ import {
   Database,
   Download,
   HardDrive,
+  House,
   KeyRound,
   LogOut,
   Mail,
@@ -29,7 +30,9 @@ import { AccountDialog, type AccountDialogKind } from '@/components/settings/acc
 import { AutoAcceptDialog, HandleDialog } from '@/components/shared/shared-ui'
 import { AreaCategoriesCard } from '@/components/settings/area-categories'
 import { CategoryManager } from '@/components/settings/category-manager'
+import { HomePurchaseTypesCard } from '@/components/settings/home-purchase-types'
 import { HomeRoomsCard } from '@/components/settings/home-rooms'
+import { HomeStoresCard } from '@/components/settings/home-stores'
 import { Button } from '@/components/ui/button'
 import { Affix } from '@/components/ui/form-kit'
 import { Card } from '@/components/ui/card'
@@ -54,12 +57,13 @@ import { PageHeader } from '@/components/layout/page-header'
 // Estrutura
 // ---------------------------------------------------------------------------
 
-export type Section = 'conta' | 'preferencias' | 'categorias' | 'dados'
+export type Section = 'conta' | 'preferencias' | 'categorias' | 'casa' | 'dados'
 
 export const SETTINGS_SECTIONS: { id: Section; label: string; icon: LucideIcon; description: string }[] = [
   { id: 'conta', label: 'Conta', icon: User, description: 'Seus dados de acesso e segurança.' },
   { id: 'preferencias', label: 'Preferências', icon: Palette, description: 'Aparência, saldo inicial e avisos.' },
   { id: 'categorias', label: 'Categorias', icon: Tags, description: 'Como seus gastos e receitas são agrupados.' },
+  { id: 'casa', label: 'Casa', icon: House, description: 'Tipos de compra, cômodos e lojas da casa.' },
   { id: 'dados', label: 'Dados', icon: Database, description: 'Backup e limpeza dos seus lançamentos.' },
 ]
 
@@ -582,8 +586,14 @@ export function SettingsSectionContent({ section }: { section: Section }) {
       {section === 'categorias' && (
         <div className="flex flex-col gap-4">
           <AreaCategoriesCard />
-          <HomeRoomsCard />
           <CategoryManager />
+        </div>
+      )}
+      {section === 'casa' && (
+        <div className="flex flex-col gap-4">
+          <HomePurchaseTypesCard />
+          <HomeRoomsCard />
+          <HomeStoresCard />
         </div>
       )}
       {section === 'dados' && <DataSection />}

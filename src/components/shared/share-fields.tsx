@@ -223,6 +223,19 @@ export function useSharedPartner(billId: string | null | undefined): string | nu
   })
 }
 
+/** Só o ícone de conta dividida, para listas onde o selo inteiro pesaria. */
+export function SharedMark({ billId, fallback }: { billId: string; fallback?: string | null }) {
+  const handle = useSharedPartner(billId)
+  const who = handle ? `@${handle}` : fallback
+  const label = who ? `Compartilhada com ${who}` : 'Compartilhada'
+  return (
+    <span title={label} className="inline-flex shrink-0 text-info">
+      <Users className="size-3.5" aria-hidden />
+      <span className="sr-only">{label}</span>
+    </span>
+  )
+}
+
 /** Selo "Compartilhada com @pessoa" para lançamentos de conta dividida. */
 export function SharedBadge({ billId, fallback }: { billId: string; fallback?: string | null }) {
   const handle = useSharedPartner(billId)

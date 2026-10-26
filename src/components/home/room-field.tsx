@@ -16,7 +16,7 @@ export function RoomField({ value, onChange }: { value: string; onChange: (roomI
         onChange={onChange}
         options={[{ value: '', label: 'Nenhum' }, ...rooms.map((r) => ({ value: r.id, label: r.name }))]}
       />
-      <p className="text-xs text-muted-foreground">Crie ou renomeie cômodos em Configurações &gt; Categorias.</p>
+      <p className="text-xs text-muted-foreground">Crie ou renomeie cômodos em Configurações &gt; Casa.</p>
     </div>
   )
 }

@@ -3,7 +3,7 @@
  * categorias marcadas, ou lançamentos vinculados um a um), comparação com os
  * meses anteriores e manutenção da casa (lembretes por tempo).
  */
-import type { Cents, HomeRoom, Installment, ISODate, RecurringCost, Transaction, YearMonth } from '@/types/finance'
+import type { Cents, HomeRoom, HomeStore, Installment, ISODate, RecurringCost, Subcategory, Transaction, YearMonth } from '@/types/finance'
 import { costKindOf, DEFAULT_HOME_CATEGORIES, isHome } from './areas'
 import { lastNMonths, monthOf, shiftMonth } from './dates'
 import { resolveStatus } from './finance'
@@ -31,7 +31,21 @@ export const PURCHASE_SUBCATEGORIES = [
   HOME_MAINTENANCE_SUBCATEGORY_ID,
 ]
 const purchaseSet = new Set(PURCHASE_SUBCATEGORIES)
-export const isHomePurchase = (t: Pick<Transaction, 'subcategoryId'>) => !!t.subcategoryId && purchaseSet.has(t.subcategoryId)
+/** Tipo de compra criado em Configurações > Casa: subcategoria da Moradia com este prefixo no id. */
+export const PURCHASE_ID_PREFIX = 'sub-casa-compra-'
+export const isHomePurchaseId = (id: string) => purchaseSet.has(id) || id.startsWith(PURCHASE_ID_PREFIX)
+export const isHomePurchase = (t: Pick<Transaction, 'subcategoryId'>) => !!t.subcategoryId && isHomePurchaseId(t.subcategoryId)
+
+/** Tipos de compra da casa: os padrão na ordem de sempre, depois os criados, por nome. */
+export function purchaseTypes(subcategories: Subcategory[]): Subcategory[] {
+  const order = (id: string) => {
+    const i = PURCHASE_SUBCATEGORIES.indexOf(id)
+    return i === -1 ? PURCHASE_SUBCATEGORIES.length : i
+  }
+  return subcategories
+    .filter((sc) => sc.categoryId === HOME_CATEGORY_ID && isHomePurchaseId(sc.id))
+    .sort((a, b) => order(a.id) - order(b.id) || a.name.localeCompare(b.name, 'pt-BR'))
+}
 
 /**
  * Vai para "Compras" da casa: subcategoria de compra da Moradia, ou gasto
@@ -162,6 +176,53 @@ export function purchaseSummary(transactions: Transaction[], endMonth: YearMonth
   }
 }
 
+/** Uma compra da lista: avulsa, parcelada (todas as parcelas) ou fixa (todos os meses). */
+export interface PurchaseGroup {
+  key: string
+  kind: 'avulsa' | 'parcelada' | 'fixa'
+  /** Parcela/mês que abre ao tocar: a próxima a pagar, ou a última */
+  main: Transaction
+  /** Avulsa: o valor; parcelada: soma das parcelas; fixa: valor do mês */
+  total: Cents
+  paid: number
+  count: number
+  /** Data que ordena a lista: compra avulsa, 1ª parcela ou último mês já vencido */
+  date: ISODate
+  /** Conta dividida de alguma parte da compra */
+  sharedBillId: string | null
+  sharedWith: string | null
+}
+
+/** Junta parcelas e meses de um fixo numa linha só, das compras mais novas para as mais antigas. */
+export function purchaseGroups(items: Transaction[], today: ISODate): PurchaseGroup[] {
+  const groups = new Map<string, Transaction[]>()
+  for (const t of items) {
+    const key = t.installment?.installmentId ?? t.recurringCostId ?? t.id
+    groups.set(key, [...(groups.get(key) ?? []), t])
+  }
+  return [...groups]
+    .map(([key, list]): PurchaseGroup => {
+      const sorted = [...list].sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+      const first = sorted[0]!
+      const kind = first.installment ? 'parcelada' : first.recurringCostId ? 'fixa' : 'avulsa'
+      const next = sorted.find((t) => t.status !== 'pago')
+      const past = sorted.filter((t) => t.dueDate <= today).at(-1)
+      const shared = sorted.find((t) => t.sharedBillId)
+      return {
+        key,
+        kind,
+        main: next ?? sorted.at(-1)!,
+        total: kind === 'parcelada' ? sorted.reduce((a, t) => a + t.amount, 0) : (next ?? sorted.at(-1)!).amount,
+        paid: sorted.filter((t) => t.status === 'pago').length,
+        count: first.installment?.total ?? sorted.length,
+        date: kind === 'fixa' ? (past ?? first).dueDate : first.dueDate,
+        sharedBillId: shared?.sharedBillId ?? null,
+        sharedWith: shared?.sharedWith ?? null,
+      }
+    })
+    .sort((a, b) => b.date.localeCompare(a.date))
+}
+
 /** Soma por subcategoria (sem subcategoria, pela categoria), do maior para o menor. */
 function totalsBySubcategory(list: Transaction[]): PurchaseSummary['bySubcategory'] {
   const bySub = new Map<string, { subcategoryId: string | null; categoryId: string; total: Cents }>()
@@ -174,7 +235,7 @@ function totalsBySubcategory(list: Transaction[]): PurchaseSummary['bySubcategor
 }
 
 // ---------------------------------------------------------------------------
-// Cômodos
+// Cômodos e lojas
 // ---------------------------------------------------------------------------
 
 /** Cômodos que já vêm prontos; a pessoa cria, renomeia e exclui em Configurações. */
@@ -188,26 +249,44 @@ export const DEFAULT_HOME_ROOMS: readonly HomeRoom[] = [
   { id: 'room-escritorio', name: 'Escritório' },
 ]
 
-export interface RoomTotal {
-  /** `null` = sem cômodo (ou cômodo excluído) */
-  roomId: string | null
+/** Lojas que já vêm prontas; a pessoa cria, renomeia e exclui em Configurações. */
+export const DEFAULT_HOME_STORES: readonly HomeStore[] = [
+  { id: 'store-havan', name: 'Havan' },
+  { id: 'store-leroy', name: 'Leroy Merlin' },
+  { id: 'store-casas-bahia', name: 'Casas Bahia' },
+  { id: 'store-magalu', name: 'Magazine Luiza' },
+  { id: 'store-mercado-livre', name: 'Mercado Livre' },
+  { id: 'store-amazon', name: 'Amazon' },
+  { id: 'store-shopee', name: 'Shopee' },
+]
+
+export interface GroupTotal {
+  /** `null` = sem cômodo/loja (ou um que foi excluído) */
+  id: string | null
   total: Cents
   bySubcategory: PurchaseSummary['bySubcategory']
 }
 
-/** Compras e reparos da casa dos últimos 12 meses por cômodo, do maior para o menor; sem cômodo por último. */
-export function roomSummary(transactions: Transaction[], endMonth: YearMonth, rooms: readonly HomeRoom[], cats: HomeCats = DEFAULT_CATS): RoomTotal[] {
-  const known = new Set(rooms.map((r) => r.id))
+/** Compras e reparos da casa dos últimos 12 meses por cômodo ou loja, do maior para o menor; sem nenhum por último. */
+export function purchasesBy(
+  field: 'roomId' | 'storeId',
+  transactions: Transaction[],
+  endMonth: YearMonth,
+  known: readonly { id: string }[],
+  cats: HomeCats = DEFAULT_CATS,
+): GroupTotal[] {
+  const ids = new Set(known.map((x) => x.id))
   const window = new Set(lastNMonths(endMonth, 12))
   const groups = new Map<string | null, Transaction[]>()
   for (const t of homeExpenses(transactions, cats)) {
     if (!isHomePurchaseTx(t) || !window.has(monthOf(t.dueDate))) continue
-    const room = t.roomId && known.has(t.roomId) ? t.roomId : null
-    groups.set(room, [...(groups.get(room) ?? []), t])
+    const value = t[field]
+    const id = value && ids.has(value) ? value : null
+    groups.set(id, [...(groups.get(id) ?? []), t])
   }
   return [...groups]
-    .map(([roomId, list]) => ({ roomId, total: list.reduce((a, t) => a + t.amount, 0), bySubcategory: totalsBySubcategory(list) }))
-    .sort((a, b) => Number(a.roomId === null) - Number(b.roomId === null) || b.total - a.total)
+    .map(([id, list]) => ({ id, total: list.reduce((a, t) => a + t.amount, 0), bySubcategory: totalsBySubcategory(list) }))
+    .sort((a, b) => Number(a.id === null) - Number(b.id === null) || b.total - a.total)
 }
 
 // ---------------------------------------------------------------------------
