@@ -626,7 +626,14 @@ function BoxCard({
   const yearAgo = shiftMonth(currentYearMonth(), -11)
   const year = items.filter((t) => monthOf(t.dueDate) >= yearAgo && monthOf(t.dueDate) <= currentYearMonth()).reduce((a, t) => a + t.amount, 0)
   const Icon = box.icon
-  const edit = (t: Transaction) => open({ kind: 'expense', vehicle, currentKm, transaction: t })
+  const editTx = useUIStore((s) => s.setEditingTransaction)
+  // Gasto de outra categoria ligado ao veículo (ex.: "Vincular a: Veículo"): abre a edição completa, onde
+  // dá para tirar o vínculo. O formulário do veículo não tem essa opção e trocaria a categoria para Veículo.
+  const edit = (t: Transaction) => {
+    const vehicleSub = !t.subcategoryId || subcategories.some((s) => s.id === t.subcategoryId && s.categoryId === VEHICLE_CATEGORY_ID)
+    if (t.categoryId === VEHICLE_CATEGORY_ID && vehicleSub) open({ kind: 'expense', vehicle, currentKm, transaction: t })
+    else editTx(t.id)
+  }
 
   return (
     <Card>

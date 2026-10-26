@@ -36,6 +36,8 @@ export type TransactionEdit = Pick<
 
 /** Campos que se propagam para as próximas ocorrências da série. */
 const SERIES_FIELDS = ['amount', 'categoryId', 'subcategoryId', 'paymentMethod', 'payTo', 'payToUid', 'payToHandle', 'notes', 'homeLink', 'costKind', 'vehicleId', 'cardId'] as const
+/** Vínculo com Casa/Veículo: passa para a série inteira, inclusive o que já passou. */
+const LINK_FIELDS = ['homeLink', 'costKind', 'vehicleId'] as const
 
 /** Remove o sufixo "(3/10)" de parcelas. */
 export const baseDescription = (t: Pick<Transaction, 'description' | 'installment'>) =>
@@ -416,16 +418,20 @@ export const useFinanceStore = create<FinanceState>()(
 
           if (scope === 'future') {
             const series = pick(patch, SERIES_FIELDS)
+            // Vínculo Casa/Veículo é da compra toda: vale também para parcelas/meses anteriores e pagos.
+            const link = 'vehicleId' in patch ? pick(patch, LINK_FIELDS) : null
             const siblings = transactions.filter(
               (x) =>
                 x.id !== t.id &&
-                x.status !== 'pago' &&
-                x.dueDate >= t.dueDate &&
                 ((t.installment && x.installment?.installmentId === t.installment.installmentId) ||
                   (t.recurringCostId && x.recurringCostId === t.recurringCostId)),
             )
             for (const x of siblings) {
-              upserts.push({ name: 'transactions', data: { ...x, ...series, description: withSuffix(base, x) } })
+              if (x.status !== 'pago' && x.dueDate >= t.dueDate) {
+                upserts.push({ name: 'transactions', data: { ...x, ...series, description: withSuffix(base, x) } })
+              } else if (link && LINK_FIELDS.some((k) => (x[k] ?? null) !== (link[k] ?? null))) {
+                upserts.push({ name: 'transactions', data: { ...x, ...link } })
+              }
             }
             const inst = t.installment && installments.find((i) => i.id === t.installment?.installmentId)
             if (inst) {

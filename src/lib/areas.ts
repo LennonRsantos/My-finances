@@ -52,10 +52,13 @@ export function defaultLink(categoryId: string, homeCats: ReadonlySet<string>, v
   return 'nenhum'
 }
 
-/** Vínculo atual de um lançamento já salvo. */
+/**
+ * Vínculo atual de um lançamento já salvo. Ligado a um veículo aparece como
+ * Veículo mesmo em categoria da casa: é onde ele está listado (aba Veículo).
+ */
 export function currentLink(t: Pick<Transaction, 'categoryId' | 'homeLink' | 'vehicleId'>, homeCats: ReadonlySet<string>): LinkTarget {
-  if (t.homeLink ?? homeCats.has(t.categoryId)) return 'casa'
-  return t.vehicleId ? 'veiculo' : 'nenhum'
+  if (t.vehicleId) return 'veiculo'
+  return t.homeLink ?? homeCats.has(t.categoryId) ? 'casa' : 'nenhum'
 }
 
 /**

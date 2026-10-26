@@ -211,7 +211,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
               {scope === 'future' && (
                 <p className="text-xs text-muted-foreground">
                   Descrição, valor, categoria, pagamento e pessoa valem para os próximos ainda pendentes. Data e status mudam só
-                  neste.
+                  neste.{!isIncome && ' O vínculo com Casa ou Veículo vale para a série toda, inclusive as já pagas.'}
                 </p>
               )}
               {seriesId && (
