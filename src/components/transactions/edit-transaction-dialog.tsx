@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Layers, Repeat, Trash2 } from 'lucide-react'
+import { Layers, Repeat, Split, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
@@ -10,6 +10,8 @@ import { PayToField, payLinkOf, type PayLink } from '@/components/shared/pay-to-
 import { SharedBillDialog } from '@/components/shared/shared-ui'
 import { InstallmentProgressEditor } from '@/components/transactions/adjust-installments'
 import { LinkFields } from '@/components/transactions/link-fields'
+import { ReceiptParts } from '@/components/transactions/receipt-parts'
+import { partEntries, resolveParts, spreadParts, type ReceiptPart } from '@/lib/receipt-parts'
 import { CardSelect } from '@/components/cards/card-select'
 import { useAreaCategories } from '@/hooks/use-areas'
 import { costKindOf, currentLink, linkPayload, type LinkTarget } from '@/lib/areas'
@@ -21,9 +23,9 @@ import { Switch } from '@/components/ui/misc'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fromCents, toCents } from '@/lib/money'
 import { parseMoneyInput } from '@/lib/schemas'
-import { cn } from '@/lib/utils'
+import { cn, createId } from '@/lib/utils'
 import { cancelSharedBill } from '@/lib/shared-cloud'
-import { baseDescription, useFinanceStore, type EditScope } from '@/store/finance-store'
+import { baseDescription, useFinanceStore, type EditScope, type TransactionEdit } from '@/store/finance-store'
 import { reportSyncError, useAuthStore } from '@/store/auth-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useUIStore } from '@/store/ui-store'
@@ -47,12 +49,13 @@ const schema = z.object({
 type Values = z.infer<typeof schema>
 
 function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone: () => void }) {
-  const { categories, subcategories, vehicles, cards, updateTransaction, deleteTransactionScoped } = useFinanceStore(
+  const { categories, subcategories, vehicles, cards, addTransaction, updateTransaction, deleteTransactionScoped } = useFinanceStore(
     useShallow((s) => ({
       categories: s.categories,
       subcategories: s.subcategories,
       vehicles: s.vehicles,
       cards: s.cards,
+      addTransaction: s.addTransaction,
       updateTransaction: s.updateTransaction,
       deleteTransactionScoped: s.deleteTransactionScoped,
     })),
@@ -79,6 +82,11 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
   const canShare = canShareExisting(t, signedIn)
   const shared = useSharedRole(t)
   const [editingBill, setEditingBill] = useState(false)
+  // Receita avulsa recebida em partes: este vira a 1ª parte, as outras são lançadas novas.
+  const canSplit = isIncome && !inSeries && !t.sharedBillId
+  const [partsOn, setPartsOn] = useState(false)
+  const [parts, setParts] = useState<ReceiptPart[]>([])
+  const [partsError, setPartsError] = useState<string | null>(null)
 
   const {
     register,
@@ -101,7 +109,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
     },
   })
 
-  const categoryId = useWatch({ control, name: 'categoryId' })
+  const [categoryId, amount, dueDateValue] = useWatch({ control, name: ['categoryId', 'amount', 'dueDate'] })
   const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
   const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
   const payTo = payToRaw.trim()
@@ -117,27 +125,36 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
       setCardMissing(true)
       return
     }
+    const resolved = partsOn ? resolveParts(parts, toCents(v.amount)) : null
+    if (resolved?.error) {
+      setPartsError(resolved.error)
+      return
+    }
     const dueDate = v.dueDate as ISODate
-    updateTransaction(
-      t.id,
-      {
-        description: v.description,
-        amount: toCents(v.amount),
-        categoryId: v.categoryId,
-        subcategoryId: v.subcategoryId,
-        dueDate,
-        paymentMethod: isIncome ? null : v.paymentMethod,
-        status: v.paid ? 'pago' : 'pendente',
-        paymentDate: v.paid ? (t.paymentDate ?? dueDate) : null,
-        payTo: !isIncome && v.payTo ? v.payTo : null,
-        payToUid: !isIncome && v.payTo && payLink ? payLink.uid : null,
-        payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
-        notes: v.notes || undefined,
-        cardId: !isIncome && v.paymentMethod === 'cartao_credito' ? cardSel : null,
-        ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
-      },
-      scope,
-    )
+    const patch: TransactionEdit = {
+      description: v.description,
+      amount: toCents(v.amount),
+      categoryId: v.categoryId,
+      subcategoryId: v.subcategoryId,
+      dueDate,
+      paymentMethod: isIncome ? null : v.paymentMethod,
+      status: v.paid ? 'pago' : 'pendente',
+      paymentDate: v.paid ? (t.paymentDate ?? dueDate) : null,
+      payTo: !isIncome && v.payTo ? v.payTo : null,
+      payToUid: !isIncome && v.payTo && payLink ? payLink.uid : null,
+      payToHandle: !isIncome && v.payTo && payLink ? payLink.handle : null,
+      notes: v.notes || undefined,
+      cardId: !isIncome && v.paymentMethod === 'cartao_credito' ? cardSel : null,
+      ...(t.fuel || isIncome ? {} : linkPayload(v.categoryId, link, linkVehicle ?? activeVehicles[0]?.id ?? null, kind, autoKind, homeCats)),
+    }
+    if (resolved) {
+      const [first, ...rest] = partEntries(parts, resolved.cents, v.description, v.paid)
+      updateTransaction(t.id, { ...patch, ...first! }, 'one')
+      // Partes novas: cópia deste, sem a linha do extrato (não conta como importada duas vezes).
+      for (const part of rest) addTransaction({ ...t, ...patch, ...part, id: createId(), importKey: null, createdAt: new Date().toISOString() })
+    } else {
+      updateTransaction(t.id, patch, scope)
+    }
     onDone()
   }
 
@@ -212,7 +229,7 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
           )}
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="edit-amount">Valor</Label>
+            <Label htmlFor="edit-amount">{partsOn ? 'Valor total' : 'Valor'}</Label>
             <Affix before="R$">
               <Input
                 id="edit-amount"
@@ -290,36 +307,39 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
             </div>
           </div>
 
-          <div className={cn('grid gap-5', !isIncome && 'sm:grid-cols-2')}>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-date">{isIncome ? 'Data de recebimento' : 'Data de vencimento'}</Label>
-              <Input id="edit-date" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
-              <FieldError message={errors.dueDate?.message} />
-            </div>
-            {!isIncome && (
+          {/* Em partes, cada parte tem a sua data. */}
+          {!partsOn && (
+            <div className={cn('grid gap-5', !isIncome && 'sm:grid-cols-2')}>
               <div className="flex flex-col gap-2">
-                <Label>Forma de pagamento</Label>
-                <Controller
-                  control={control}
-                  name="paymentMethod"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger aria-label="Forma de pagamento">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PAYMENT_METHODS.map((m) => (
-                          <SelectItem key={m} value={m}>
-                            {PAYMENT_METHOD_LABELS[m]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
+                <Label htmlFor="edit-date">{isIncome ? 'Data de recebimento' : 'Data de vencimento'}</Label>
+                <Input id="edit-date" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
+                <FieldError message={errors.dueDate?.message} />
               </div>
-            )}
-          </div>
+              {!isIncome && (
+                <div className="flex flex-col gap-2">
+                  <Label>Forma de pagamento</Label>
+                  <Controller
+                    control={control}
+                    name="paymentMethod"
+                    render={({ field }) => (
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger aria-label="Forma de pagamento">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_METHODS.map((m) => (
+                            <SelectItem key={m} value={m}>
+                              {PAYMENT_METHOD_LABELS[m]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {!isIncome && paymentMethodValue === 'cartao_credito' && cardList.length > 0 && (
             <CardSelect
@@ -363,11 +383,52 @@ function EditForm({ transaction: t, onDone }: { transaction: Transaction; onDone
             name="paid"
             render={({ field }) => (
               <div className="flex items-center justify-between gap-4 rounded-xl border p-3">
-                <Label htmlFor="edit-paid">{isIncome ? 'Recebido' : payTo ? `Enviado para ${payTo}` : 'Pago'}</Label>
+                {partsOn ? (
+                  <div>
+                    <Label htmlFor="edit-paid">Partes até hoje já recebidas</Label>
+                    <p className="text-xs text-muted-foreground">Partes com data futura ficam pendentes.</p>
+                  </div>
+                ) : (
+                  <Label htmlFor="edit-paid">{isIncome ? 'Recebido' : payTo ? `Enviado para ${payTo}` : 'Pago'}</Label>
+                )}
                 <Switch id="edit-paid" checked={field.value} onCheckedChange={field.onChange} />
               </div>
             )}
           />
+
+          {canSplit && (
+            <div className="flex flex-col gap-4 rounded-xl border p-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <Split className="size-4 text-muted-foreground" />
+                  <div>
+                    <Label htmlFor="edit-partsOn">Recebido em partes</Label>
+                    <p className="text-xs text-muted-foreground">Este lançamento vira a 1ª parte; as outras entram como lançamentos novos.</p>
+                  </div>
+                </div>
+                <Switch
+                  id="edit-partsOn"
+                  checked={partsOn}
+                  onCheckedChange={(on) => {
+                    setPartsOn(on)
+                    setPartsError(null)
+                    if (on) setParts(spreadParts(toCents(amount), [dueDateValue as ISODate, '']))
+                  }}
+                />
+              </div>
+              {partsOn && (
+                <ReceiptParts
+                  parts={parts}
+                  onChange={(next) => {
+                    setParts(next)
+                    setPartsError(null)
+                  }}
+                  totalCents={toCents(amount)}
+                  error={partsError}
+                />
+              )}
+            </div>
+          )}
 
           {canShare && <ShareExisting transaction={t} />}
           {shared && (

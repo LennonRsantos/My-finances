@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Affix } from '@/components/ui/form-kit'
-import { ArrowDownRight, ArrowUpRight, Layers, Repeat } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Layers, Repeat, Split } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm, useWatch, type DefaultValues } from 'react-hook-form'
 import { useShallow } from 'zustand/react/shallow'
@@ -17,6 +17,8 @@ import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
 import { PayToField, type PayLink } from '@/components/shared/pay-to-field'
 import { LinkFields } from '@/components/transactions/link-fields'
 import { CardSelect } from '@/components/cards/card-select'
+import { ReceiptParts } from '@/components/transactions/receipt-parts'
+import { partEntries, resolveParts, spreadParts, type ReceiptPart } from '@/lib/receipt-parts'
 import { compactLink, defaultLink, linkPayload, type LinkTarget } from '@/lib/areas'
 import { useAreaCategories } from '@/hooks/use-areas'
 import type { CostKind } from '@/types/finance'
@@ -136,6 +138,11 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
   /** Parcelamento já em andamento (ex.: empréstimo na 11ª de 36) */
   const ongoing = isInstallment && installmentMode === 'andamento'
+  // Receita recebida em partes (ex.: freela 150 num dia + 150 noutro): um lançamento por parte.
+  const [partsOn, setPartsOn] = useState(false)
+  const [parts, setParts] = useState<ReceiptPart[]>([])
+  const [partsError, setPartsError] = useState<string | null>(null)
+  const splitting = partsOn && type === 'receita'
   const payToRaw = useWatch({ control, name: 'payTo' }) ?? ''
   const payTo = payToRaw.trim()
   // Usuário do app escolhido em "Enviar para" (ele vê o valor no Dashboard dele).
@@ -241,6 +248,12 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
       return
     }
     setCardMissing(false)
+    const resolved = splitting && !v.isRecurring ? resolveParts(parts, toCents(v.amount)) : null
+    if (resolved?.error) {
+      setPartsError(resolved.error)
+      return
+    }
+    setPartsError(null)
     if (sharing) return submitShared(v)
     const due = v.dueDate as ISODate
     const totalCents = toCents(v.amount)
@@ -320,8 +333,13 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
         notes: v.notes || undefined,
         createdAt: new Date().toISOString(),
       }
-      addTransaction(t)
-      onSuccess?.(`${v.type === 'receita' ? 'Receita' : 'Despesa'} "${v.description}" lançada`)
+      if (resolved) {
+        for (const part of partEntries(parts, resolved.cents, v.description, v.paid)) addTransaction({ ...t, id: createId(), ...part })
+        onSuccess?.(`Receita "${v.description}" lançada em ${parts.length} partes`)
+      } else {
+        addTransaction(t)
+        onSuccess?.(`${v.type === 'receita' ? 'Receita' : 'Despesa'} "${v.description}" lançada`)
+      }
     }
     reset(defaultValues(v.type))
     setPickedVehicle(undefined)
@@ -329,6 +347,8 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
     setKindPick(null)
     setPickedCard(undefined)
     setPayLink(null)
+    setPartsOn(false)
+    setParts([])
   }
 
   const today = todayISO()
@@ -373,7 +393,9 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
 
         {/* Valor */}
         <div className="flex flex-col gap-2">
-          <Label htmlFor="amount">{ongoing ? 'Valor da parcela' : isInstallment ? 'Valor total da compra' : 'Valor'}</Label>
+          <Label htmlFor="amount">
+            {ongoing ? 'Valor da parcela' : isInstallment ? 'Valor total da compra' : splitting ? 'Valor total' : 'Valor'}
+          </Label>
           <Affix before="R$">
             <Input
               id="amount"
@@ -503,65 +525,67 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
           />
         )}
 
-        {/* Data + forma de pagamento (só despesa) */}
-        <div className={cn('grid gap-5', type === 'despesa' && 'sm:grid-cols-2')}>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="dueDate">
-              {ongoing
-                ? `Vencimento da parcela ${installmentPreview?.startAt ?? currentInstallment}`
-                : isInstallment
-                  ? '1ª parcela vence em'
-                  : isRecurring
-                    ? type === 'receita'
-                      ? '1º recebimento'
-                      : '1º vencimento'
-                    : type === 'receita'
-                    ? 'Data de recebimento'
-                    : 'Data de vencimento'}
-            </Label>
-            <Input id="dueDate" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
-            <div className="flex gap-2">
-              {quickDates.map((d) => (
-                <button
-                  key={d.label}
-                  type="button"
-                  onClick={() => setValue('dueDate', d.value, { shouldValidate: true })}
-                  className={cn(
-                    'h-9 rounded-full border px-4 text-sm',
-                    dueDate === d.value ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted',
-                  )}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-            <FieldError message={errors.dueDate?.message} />
-          </div>
-
-          {type === 'despesa' && (
+        {/* Data + forma de pagamento (só despesa). Em partes, cada parte tem a sua data. */}
+        {!splitting && (
+          <div className={cn('grid gap-5', type === 'despesa' && 'sm:grid-cols-2')}>
             <div className="flex flex-col gap-2">
-              <Label>Forma de pagamento</Label>
-              <Controller
-                control={control}
-                name="paymentMethod"
-                render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger aria-label="Forma de pagamento">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_METHODS.map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {PAYMENT_METHOD_LABELS[m]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+              <Label htmlFor="dueDate">
+                {ongoing
+                  ? `Vencimento da parcela ${installmentPreview?.startAt ?? currentInstallment}`
+                  : isInstallment
+                    ? '1ª parcela vence em'
+                    : isRecurring
+                      ? type === 'receita'
+                        ? '1º recebimento'
+                        : '1º vencimento'
+                      : type === 'receita'
+                      ? 'Data de recebimento'
+                      : 'Data de vencimento'}
+              </Label>
+              <Input id="dueDate" type="date" aria-invalid={!!errors.dueDate} {...register('dueDate')} />
+              <div className="flex gap-2">
+                {quickDates.map((d) => (
+                  <button
+                    key={d.label}
+                    type="button"
+                    onClick={() => setValue('dueDate', d.value, { shouldValidate: true })}
+                    className={cn(
+                      'h-9 rounded-full border px-4 text-sm',
+                      dueDate === d.value ? 'border-foreground bg-foreground text-background' : 'hover:bg-muted',
+                    )}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <FieldError message={errors.dueDate?.message} />
             </div>
-          )}
-        </div>
+
+            {type === 'despesa' && (
+              <div className="flex flex-col gap-2">
+                <Label>Forma de pagamento</Label>
+                <Controller
+                  control={control}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger aria-label="Forma de pagamento">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_METHODS.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {PAYMENT_METHOD_LABELS[m]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length > 0 && (
           <CardSelect
@@ -604,13 +628,17 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
                         ? type === 'receita'
                           ? '1º já recebido'
                           : '1º já pago'
-                      : type === 'receita'
-                        ? 'Já recebido'
-                        : payTo
-                          ? `Já enviado para ${payTo}`
-                          : 'Já pago'}
+                      : splitting
+                        ? 'Partes até hoje já recebidas'
+                        : type === 'receita'
+                          ? 'Já recebido'
+                          : payTo
+                            ? `Já enviado para ${payTo}`
+                            : 'Já pago'}
                 </Label>
-                <p className="text-xs text-muted-foreground">Desligue para lançar como pendente.</p>
+                <p className="text-xs text-muted-foreground">
+                  {splitting ? 'Partes com data futura ficam pendentes.' : 'Desligue para lançar como pendente.'}
+                </p>
               </div>
               <Switch id="paid" checked={field.value} onCheckedChange={field.onChange} />
             </div>
@@ -636,7 +664,10 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
                   checked={field.value}
                   onCheckedChange={(on) => {
                     field.onChange(on)
-                    if (on) setValue('isInstallment', false)
+                    if (on) {
+                      setValue('isInstallment', false)
+                      setPartsOn(false)
+                    }
                   }}
                 />
               </div>
@@ -677,6 +708,44 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
             </>
           )}
         </div>
+
+        {/* Recebido em partes (só receita avulsa) */}
+        {type === 'receita' && (
+          <div className="flex flex-col gap-4 rounded-xl border p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Split className="size-4 text-muted-foreground" />
+                <div>
+                  <Label htmlFor="partsOn">Recebido em partes</Label>
+                  <p className="text-xs text-muted-foreground">Ex.: freela pago metade num dia e metade em outro.</p>
+                </div>
+              </div>
+              <Switch
+                id="partsOn"
+                checked={partsOn}
+                onCheckedChange={(on) => {
+                  setPartsOn(on)
+                  setPartsError(null)
+                  if (on) {
+                    setValue('isRecurring', false)
+                    setParts(spreadParts(toCents(amount), [dueDate as ISODate, '']))
+                  }
+                }}
+              />
+            </div>
+            {partsOn && (
+              <ReceiptParts
+                parts={parts}
+                onChange={(next) => {
+                  setParts(next)
+                  setPartsError(null)
+                }}
+                totalCents={toCents(amount)}
+                error={partsError}
+              />
+            )}
+          </div>
+        )}
 
         {/* Parcelamento */}
         {type === 'despesa' && (
