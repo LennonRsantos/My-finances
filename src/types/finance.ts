@@ -591,6 +591,15 @@ export interface UserSettings {
   homeRooms?: HomeRoom[]
   /** Lojas das compras da casa; ausente = padrão (Havan, Leroy Merlin...) */
   homeStores?: HomeStore[]
+  /** Sugestões de descrição do Novo lançamento (ex.: cliente de freela) */
+  descriptionPresets?: DescriptionPreset[]
+}
+
+/** Descrição pronta com a categoria dela; receita ou despesa conforme a categoria. */
+export interface DescriptionPreset {
+  id: string
+  name: string
+  categoryId: string
 }
 
 export interface HomeRoom {

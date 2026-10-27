@@ -17,6 +17,7 @@ import { VEHICLE_CATEGORY_ID } from '@/lib/vehicle'
 import { PayToField, type PayLink } from '@/components/shared/pay-to-field'
 import { LinkFields } from '@/components/transactions/link-fields'
 import { CardSelect } from '@/components/cards/card-select'
+import { DescriptionChips } from '@/components/transactions/description-presets'
 import { ReceiptParts } from '@/components/transactions/receipt-parts'
 import { partEntries, resolveParts, spreadParts, type ReceiptPart } from '@/lib/receipt-parts'
 import { compactLink, defaultLink, linkPayload, type LinkTarget } from '@/lib/areas'
@@ -128,6 +129,7 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
   const costKind = kindPick ?? autoKind
   // Cartão de crédito: com um cartão só, ele já vem escolhido.
   const paymentMethodValue = useWatch({ control, name: 'paymentMethod' })
+  const descriptionValue = useWatch({ control, name: 'description' }) ?? ''
   const activeCards = cards.filter((c) => c.active)
   const [pickedCard, setPickedCard] = useState<string | null | undefined>(undefined)
   const usesCard = type === 'despesa' && paymentMethodValue === 'cartao_credito' && activeCards.length > 0
@@ -420,6 +422,15 @@ export function TransactionForm({ initialType = 'despesa', onSuccess, onCancel }
             {...register('description')}
           />
           <FieldError message={errors.description?.message} />
+          <DescriptionChips
+            type={type}
+            text={descriptionValue}
+            onPick={(p) => {
+              setValue('description', p.name, { shouldValidate: true })
+              setValue('categoryId', p.categoryId, { shouldValidate: true })
+              setValue('subcategoryId', null)
+            }}
+          />
         </div>
 
         {/* Categoria: atalhos + select */}
